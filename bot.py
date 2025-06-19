@@ -1,7 +1,8 @@
 import logging
 import os
+import sqlite3
 from datetime import datetime
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -10,8 +11,6 @@ from telegram.ext import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
-
-# Импортируем функции из database.py
 from database import (
     init_db,
     add_note,
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 # Инициализация планировщика
 scheduler = AsyncIOScheduler()
 
-# ==== КОМАНДЫ БОТА ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет приветственное сообщение."""
     await update.message.reply_text(
@@ -44,43 +42,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отправляет список доступных команд с инлайн-кнопками."""
     keyboard = [
-        [InlineKeyboardButton("/start", callback_data="/start"), InlineKeyboardButton("/help", callback_data="/help")],
-        [InlineKeyboardButton("/addnote", callback_data="/addnote"), InlineKeyboardButton("/listnotes", callback_data="/listnotes"),
-         InlineKeyboardButton("/deletenote", callback_data="/deletenote")],
-        [InlineKeyboardButton("/additem", callback_data="/additem"), InlineKeyboardButton("/listitems", callback_data="/listitems"),
-         InlineKeyboardButton("/deleteitem", callback_data="/deleteitem")],
-        [InlineKeyboardButton("/clearitems", callback_data="/clearitems"), InlineKeyboardButton("/setreminder", callback_data="/setreminder")],
-        [InlineKeyboardButton("/listreminders", callback_data="/listreminders"), InlineKeyboardButton("/deletereminder", callback_data="/deletereminder")]
+        [
+            InlineKeyboardButton("/start", callback_data="/start"),
+            InlineKeyboardButton("/help", callback_data="/help"),
+        ],
+        [
+            InlineKeyboardButton("/addnote", callback_data="/addnote"),
+            InlineKeyboardButton("/listnotes", callback_data="/listnotes"),
+            InlineKeyboardButton("/deletenote", callback_data="/deletenote"),
+        ],
+        [
+            InlineKeyboardButton("/additem", callback_data="/additem"),
+            InlineKeyboardButton("/listitems", callback_data="/listitems"),
+            InlineKeyboardButton("/deleteitem", callback_data="/deleteitem"),
+        ],
+        [
+            InlineKeyboardButton("/clearitems", callback_data="/clearitems"),
+            InlineKeyboardButton("/setreminder", callback_data="/setreminder"),
+        ],
+        [
+            InlineKeyboardButton("/listreminders", callback_data="/listreminders"),
+            InlineKeyboardButton("/deletereminder", callback_data="/deletereminder"),
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "Доступные команды:\n"
-        "/start — начать работу\n"
-        "/help — показать список команд\n"
-        "/addnote <текст> — добавить заметку\n"
-        "/listnotes — показать все заметки\n"
-        "/deletenote <id> — удалить заметку\n"
-        "/additem <элемент> — добавить в список покупок\n"
-        "/listitems — показать список покупок\n"
-        "/deleteitem <id> — удалить элемент из списка\n"
-        "/clearitems — очистить список покупок\n"
-        "/setreminder <YYYY-MM-DD HH:MM> <текст> — установить напоминание\n"
-        "/listreminders — показать все напоминания\n"
-        "/deletereminder <id> — удалить напоминание\n"
-        "\nНажмите на кнопку ниже, чтобы подставить команду:",
+        "/start - Начать работу с ботом\n"
+        "/help - Показать список команд\n"
+        "/addnote <текст> - Добавить заметку\n"
+        "/listnotes - Показать все заметки\n"
+        "/deletenote <id> - Удалить заметку\n"
+        "/additem <элемент> - Добавить в список покупок\n"
+        "/listitems - Показать список покупок\n"
+        "/deleteitem <id> - Удалить элемент из списка покупок\n"
+        "/clearitems - Очистить список покупок\n"
+        "/setreminder <YYYY-MM-DD HH:MM> <текст> - Установить напоминание\n"
+        "/listreminders - Показать все напоминания\n"
+        "/deletereminder <id> - Удалить напоминание\n\n"
+        "Нажмите на кнопку ниже, чтобы подставить команду в поле ввода:",
         reply_markup=reply_markup,
     )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обрабатывает нажатия на инлайн-кнопки."""
     query = update.callback_query
     command = query.data
-    await query.answer()
+    await query.answer()  # Подтверждаем нажатие
+    # Отправляем команду как текст в поле ввода
     await query.message.reply_text(f"Введите: {command}")
+    # Удаляем сообщение с кнопками, чтобы не загромождать чат
     await query.message.delete()
 
-# ==== ФУНКЦИИ ЗАМЕТОК ====
 async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Добавляет новую заметку."""
     if not context.args:
         await update.message.reply_text("Пожалуйста, укажите текст заметки: /addnote <текст>")
         return
@@ -90,6 +107,7 @@ async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text("Заметка добавлена!")
 
 async def list_notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает все заметки пользователя."""
     user_id = update.effective_user.id
     notes = get_notes(user_id)
     if not notes:
@@ -101,6 +119,7 @@ async def list_notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(response)
 
 async def delete_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет заметку по ID."""
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Пожалуйста, укажите ID заметки: /deletenote <id>")
         return
@@ -111,8 +130,8 @@ async def delete_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await update.message.reply_text("Заметка не найдена.")
 
-# ==== ФУНКЦИИ СПИСКА ПОКУПОК ====
 async def add_shopping_item_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Добавляет элемент в список покупок."""
     if not context.args:
         await update.message.reply_text("Пожалуйста, укажите элемент: /additem <элемент>")
         return
@@ -122,6 +141,7 @@ async def add_shopping_item_command(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text("Элемент добавлен в список покупок!")
 
 async def list_shopping_items_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает список покупок пользователя."""
     user_id = update.effective_user.id
     items = get_shopping_items(user_id)
     if not items:
@@ -133,6 +153,7 @@ async def list_shopping_items_command(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text(response)
 
 async def delete_shopping_item_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет элемент из списка покупок по ID."""
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Пожалуйста, укажите ID элемента: /deleteitem <id>")
         return
@@ -144,14 +165,17 @@ async def delete_shopping_item_command(update: Update, context: ContextTypes.DEF
         await update.message.reply_text("Элемент не найден.")
 
 async def clear_shopping_items_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Очищает весь список покупок."""
     user_id = update.effective_user.id
     clear_shopping_items(user_id)
     await update.message.reply_text("Список покупок очищен!")
 
-# ==== ФУНКЦИИ НАПОМИНАНИЙ ====
 async def set_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Устанавливает напоминание."""
     if len(context.args) < 2:
-        await update.message.reply_text("Используйте: /setreminder YYYY-MM-DD HH:MM <текст>")
+        await update.message.reply_text(
+            "Пожалуйста, укажите дату, время и текст: /setreminder YYYY-MM-DD HH:MM <текст>"
+        )
         return
     try:
         datetime_str = f"{context.args[0]} {context.args[1]}"
@@ -159,56 +183,55 @@ async def set_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYP
         text = " ".join(context.args[2:])
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
+
         reminder_id = add_reminder(user_id, text, reminder_time)
         scheduler.add_job(
             send_reminder,
             trigger=DateTrigger(run_date=reminder_time),
-            args=[context.bot, chat_id, text, reminder_id]
+            args=[context.bot, chat_id, text, reminder_id],
         )
         await update.message.reply_text(f"Напоминание установлено на {datetime_str}!")
     except ValueError:
-        await update.message.reply_text("Неверный формат даты. Используйте: YYYY-MM-DD HH:MM")
+        await update.message.reply_text("Неверный формат даты/времени. Используйте: YYYY-MM-DD HH:MM")
 
 async def send_reminder(bot, chat_id: int, text: str, reminder_id: int) -> None:
-    await bot.send_message(chat_id=chat_id, text=f"🔔 Напоминание: {text}")
+    """Отправляет напоминание пользователю."""
+    await bot.send_message(chat_id=chat_id, text=f"Напоминание: {text}")
     delete_reminder(reminder_id)
 
 async def list_reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает все напоминания пользователя."""
     user_id = update.effective_user.id
     reminders = get_reminders(user_id)
     if not reminders:
         await update.message.reply_text("У вас нет активных напоминаний.")
         return
     response = "Ваши напоминания:\n"
-    for r in reminders:
-        response += f"ID: {r[0]} | {r[2]} в {r[3]}\n"
+    for reminder in reminders:
+        response += f"ID: {reminder[0]} | {reminder[2]} в {reminder[3]}\n"
     await update.message.reply_text(response)
 
 async def delete_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет напоминание по ID."""
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Пожалуйста, укажите ID напоминания: /deletereminder <id>")
         return
     reminder_id = int(context.args[0])
+    user_id = update.effective_user.id
     if delete_reminder(reminder_id):
         await update.message.reply_text("Напоминание удалено!")
     else:
         await update.message.reply_text("Напоминание не найдено.")
 
-# ==== ОБРАБОТЧИК ВЕБХУКА ====
-async def process_update(update: dict, application: Application):
-    """Обработчик входящих обновлений от Telegram"""
-    update_obj = Update.de_json(data=update, bot=application.bot)
-    await application.process_update(update_obj)
+def main() -> None:
+    """Запускает бота."""
+    init_db()
+    scheduler.start()
 
-# ==== ИНИЦИАЛИЗАЦИЯ БОТА ====
-def create_application():
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        raise ValueError("BOT_TOKEN не установлен в переменных окружения")
+    # Используем переменную окружения для токена
+    application = Application.builder().token(os.getenv("BOT_TOKEN")).build()
 
-    application = Application.builder().token(token).build()
-
-    # Регистрация команд
+    # Добавление обработчиков команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addnote", add_note_command))
@@ -223,7 +246,8 @@ def create_application():
     application.add_handler(CommandHandler("deletereminder", delete_reminder_command))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # Запуск планировщика
-    scheduler.start()
+    # Запуск бота
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    return application
+if __name__ == "__main__":
+    main()
