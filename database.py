@@ -1,5 +1,5 @@
 import os
-import psycopg2
+import psycopg
 from datetime import datetime
 
 # Подключение к PostgreSQL
