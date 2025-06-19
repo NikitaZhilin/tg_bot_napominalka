@@ -1,5 +1,5 @@
 python-telegram-bot==21.6
 apscheduler==3.10.4
 python-dotenv==1.0.1
-psycopg[binary]
+psycopg2-binary==2.9.9
 flask==3.0.0
