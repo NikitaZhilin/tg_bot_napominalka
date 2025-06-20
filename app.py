@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from flask import Flask, request
 from bot import create_application, process_update
 
@@ -12,7 +13,17 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Инициализация приложения Telegram бота
-bot_app = create_application()
+try:
+    bot_app = create_application()
+except Exception as e:
+    logger.error(f"Failed to initialize bot application: {e}")
+    raise
+
+
+@app.route("/", methods=["GET", "HEAD"])
+def root():
+    """Обработка корневого пути для предотвращения 404."""
+    return {"status": "ok", "message": "Telegram bot is running"}, 200
 
 
 @app.route("/<token>", methods=["POST"])
@@ -21,23 +32,39 @@ async def webhook(token):
     if token == os.getenv("BOT_TOKEN"):
         update = request.get_json()
         logger.info(f"Received update: {update}")
-        await process_update(update, bot_app)
-        return {"status": "ok"}
+        try:
+            await process_update(update, bot_app)
+            return {"status": "ok"}
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            return {"status": "error", "message": str(e)}, 500
     return {"status": "error", "message": "Invalid token"}, 403
 
 
 @app.route("/setwebhook", methods=["GET"])
-def set_webhook():
+async def set_webhook():
     """Установка вебхука для Telegram."""
     token = os.getenv("BOT_TOKEN")
-    service_name = os.getenv("RENDER_SERVICE_NAME", "localhost:5000")
-    webhook_url = f"https://{service_name}/{token}"
+    if not token:
+        logger.error("BOT_TOKEN is not set in environment variables")
+        return {"status": "error", "message": "BOT_TOKEN is not set"}, 500
 
-    # Установка вебхука через Telegram API
-    bot = bot_app.bot
-    bot.set_webhook(webhook_url)
-    logger.info(f"Webhook set to: {webhook_url}")
-    return f"✅ Вебхук установлен: {webhook_url}"
+    # Для локального тестирования использовать NGROK_URL, если задан
+    ngrok_url = os.getenv("NGROK_URL")
+    if ngrok_url:
+        webhook_url = f"{ngrok_url}/{token}"
+    else:
+        service_name = os.getenv("RENDER_SERVICE_NAME", "localhost:5000")
+        webhook_url = f"https://{service_name}/{token}"
+
+    try:
+        bot = bot_app.bot
+        await bot.set_webhook(webhook_url)
+        logger.info(f"Webhook set to: {webhook_url}")
+        return f"✅ Вебхук установлен: {webhook_url}"
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
+        return {"status": "error", "message": str(e)}, 500
 
 
 if __name__ == "__main__":
