@@ -12,62 +12,54 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Инициализация приложения Telegram бота
+# Асинхронная инициализация бота
 try:
-    bot_app = create_application()
+    loop = asyncio.get_event_loop()
+    bot_app = loop.run_until_complete(create_application())
 except Exception as e:
-    logger.error(f"Failed to initialize bot application: {e}")
+    logger.error(f"Не удалось создать приложение бота: {e}")
     raise
 
-
-@app.route("/", methods=["GET", "HEAD"])
+@app.route("/", methods=["GET"])
 def root():
-    """Обработка корневого пути для предотвращения 404."""
     return {"status": "ok", "message": "Telegram bot is running"}, 200
 
 
 @app.route("/<token>", methods=["POST"])
 async def webhook(token):
-    """Обработка входящих обновлений от Telegram через вебхук."""
     if token == os.getenv("BOT_TOKEN"):
         update = request.get_json()
-        logger.info(f"Received update: {update}")
+        logger.info(f"Получено обновление: {update}")
         try:
             await process_update(update, bot_app)
             return {"status": "ok"}
         except Exception as e:
-            logger.error(f"Error processing update: {e}")
+            logger.error(f"Ошибка обработки обновления: {e}")
             return {"status": "error", "message": str(e)}, 500
     return {"status": "error", "message": "Invalid token"}, 403
 
 
 @app.route("/setwebhook", methods=["GET"])
-async def set_webhook():
-    """Установка вебхука для Telegram."""
+def set_webhook_route():
+    from telegram.ext import Application
     token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.error("BOT_TOKEN is not set in environment variables")
-        return {"status": "error", "message": "BOT_TOKEN is not set"}, 500
+        logger.error("BOT_TOKEN не установлен")
+        return {"status": "error", "message": "BOT_TOKEN не установлен"}, 500
 
-    # Для локального тестирования использовать NGROK_URL, если задан
-    ngrok_url = os.getenv("NGROK_URL")
-    if ngrok_url:
-        webhook_url = f"{ngrok_url}/{token}"
-    else:
-        service_name = os.getenv("RENDER_SERVICE_NAME", "localhost:5000")
-        webhook_url = f"https://{service_name}/{token}"
+    public_url = f"https://{os.getenv('RENDER_SERVICE_NAME')}.onrender.com/{token}"
 
     try:
-        bot = bot_app.bot
-        await bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-        return f"✅ Вебхук установлен: {webhook_url}"
+        # Вручную создаём Application и устанавливаем вебхук
+        bot = Application.builder().token(token).build().bot
+        bot.set_webhook(public_url)
+        logger.info(f"✅ Вебхук установлен: {public_url}")
+        return {"status": "ok", "message": f"Вебхук установлен: {public_url}"}
     except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
+        logger.error(f"❌ Ошибка установки вебхука: {e}")
         return {"status": "error", "message": str(e)}, 500
 
 
 if __name__ == "__main__":
-    # Запуск Flask-сервера на 0.0.0.0 с портом из переменной окружения
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
