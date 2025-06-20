@@ -1,38 +1,46 @@
 import os
-from flask import Flask, request, jsonify
+import logging
+from flask import Flask, request
 from bot import create_application, process_update
 
-# Создаём Flask-приложение
+# Настройка логирования
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
-# Загрузка переменных окружения
-from dotenv import load_dotenv
-load_dotenv()
-
-# Инициализируем бота
+# Инициализация приложения Telegram бота
 bot_app = create_application()
 
-# URL для вебхука: https://<ваш_сервис>.onrender.com/<BOT_TOKEN>
-WEBHOOK_PATH = f"/{os.getenv('BOT_TOKEN')}"
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-async def webhook():
-    update = request.get_json()
-    await process_update(update, bot_app)
-    return jsonify({"status": "ok"}), 200
+@app.route("/<token>", methods=["POST"])
+async def webhook(token):
+    """Обработка входящих обновлений от Telegram через вебхук."""
+    if token == os.getenv("BOT_TOKEN"):
+        update = request.get_json()
+        logger.info(f"Received update: {update}")
+        await process_update(update, bot_app)
+        return {"status": "ok"}
+    return {"status": "error", "message": "Invalid token"}, 403
 
-@app.route("/")
-def index():
-    return "Telegram-бот работает на Render.com", 200
 
-@app.route("/setwebhook")
-def set_webhook_route():
-    from telegram.ext import Application
+@app.route("/setwebhook", methods=["GET"])
+def set_webhook():
+    """Установка вебхука для Telegram."""
     token = os.getenv("BOT_TOKEN")
-    public_url = f"https://{os.getenv('RENDER_SERVICE_NAME')}.onrender.com/{token}"
-    bot = Application.builder().token(token).build().bot
-    bot.set_webhook(public_url)
-    return f"✅ Вебхук установлен: {public_url}"
+    service_name = os.getenv("RENDER_SERVICE_NAME", "localhost:5000")
+    webhook_url = f"https://{service_name}/{token}"
+
+    # Установка вебхука через Telegram API
+    bot = bot_app.bot
+    bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to: {webhook_url}")
+    return f"✅ Вебхук установлен: {webhook_url}"
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Запуск Flask-сервера на 0.0.0.0 с портом из переменной окружения
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
