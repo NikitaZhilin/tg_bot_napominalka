@@ -3,7 +3,7 @@ services:
     name: tg-bot-webhook
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: gunicorn --bind :$PORT --workers 1 --timeout 120 app:app
     envVars:
       - key: BOT_TOKEN
         value: 7846744690:AAFtYLy4DdsjOtjhmMVnL1knokSO8raJPnY
@@ -17,3 +17,5 @@ services:
         value: ваш_пароль
       - key: DB_PORT
         value: "5432"
+      - key: RENDER_SERVICE_NAME
+        value: tg-bot-webhook
