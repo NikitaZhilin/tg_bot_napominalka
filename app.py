@@ -24,8 +24,7 @@ if not token:
     raise ValueError("BOT_TOKEN is not set")
 
 # Инициализация приложения Telegram бота
-loop = asyncio.get_event_loop()
-bot_app = loop.run_until_complete(create_application())
+bot_app = asyncio.run(create_application())
 
 
 @app.route("/", methods=["GET", "HEAD"])
@@ -54,9 +53,10 @@ async def set_webhook():
 
 
 @app.route(f"/{token}", methods=["POST"])
-async def webhook(token_received):
+async def webhook(token_received: str):
     """Обработка обновлений от Telegram."""
     if token_received != token:
+        logger.error("Invalid token received")
         return {"status": "error", "message": "Invalid token"}, 403
 
     update_data = request.get_json()
@@ -64,8 +64,12 @@ async def webhook(token_received):
 
     try:
         update = Update.de_json(update_data, bot_app.bot)
-        await bot_app.process_update(update)
-        return {"status": "ok"}, 200
+        if update:
+            await bot_app.process_update(update)
+            return {"status": "ok"}, 200
+        else:
+            logger.error("Failed to parse update data")
+            return {"status": "error", "message": "Invalid update data"}, 400
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}, 500
