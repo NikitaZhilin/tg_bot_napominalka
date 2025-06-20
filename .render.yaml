@@ -12,10 +12,13 @@ services:
       - key: DB_HOST
         value: ep-purple-wave-a9bx68xy-pooler.gwc.azure.neon.tech
       - key: DB_NAME
-        value: бот напоминалка
+        value: bot_reminder_db
       - key: DB_USER
-        value: neondb_owner
+        value: bot_reminder_db_owner
       - key: DB_PASSWORD
-        value: npg_QpsFjD8Goc2i
+        value: npg_6QLicFIXOW2J
       - key: DB_PORT
         value: "5432"
+$token = "7846744690:AAFtYLy4DdsjOtjhmMVnL1knokSO8raJPnY"
+$render_url = "https://tg-bot-napominalka.onrender.com/7846744690:AAFtYLy4DdsjOtjhmMVnL1knokSO8raJPnY"
+

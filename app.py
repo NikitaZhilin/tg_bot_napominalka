@@ -5,6 +5,7 @@ from flask import Flask, request
 from dotenv import load_dotenv
 from bot import create_application, process_update
 from telegram import Update
+import psycopg2
 
 # Загрузка переменных окружения из .env
 load_dotenv()
@@ -26,12 +27,29 @@ if not token:
 # Инициализация приложения Telegram бота
 bot_app = asyncio.run(create_application())
 
-
 @app.route("/", methods=["GET", "HEAD"])
 def root():
     """Обработка корневого пути."""
     return {"status": "ok", "message": "Telegram bot is running"}, 200
 
+@app.route("/check_db")
+def check_db():
+    """Временный роут для проверки подключения к БД."""
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            database=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            port=os.getenv("DB_PORT"),
+            sslmode="require"
+        )
+        conn.close()
+        logger.info("✅ Проверка БД: подключение успешно")
+        return {"status": "ok", "db_connection": True}, 200
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к БД: {e}")
+        return {"status": "error", "db_connection": False, "error": str(e)}, 500
 
 @app.route("/setwebhook", methods=["GET"])
 async def set_webhook():
@@ -51,14 +69,9 @@ async def set_webhook():
         logger.error(f"Failed to set webhook: {e}")
         return {"status": "error", "message": str(e)}, 500
 
-
 @app.route(f"/{token}", methods=["POST"])
-async def webhook(token_received: str):
+async def webhook():
     """Обработка обновлений от Telegram."""
-    if token_received != token:
-        logger.error("Invalid token received")
-        return {"status": "error", "message": "Invalid token"}, 403
-
     update_data = request.get_json()
     logger.info(f"Received update: {update_data}")
 
@@ -73,7 +86,6 @@ async def webhook(token_received: str):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}, 500
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
