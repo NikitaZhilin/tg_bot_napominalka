@@ -1,21 +1,21 @@
 services:
   - type: web
-    name: tg-bot-webhook
+    name: tg-bot-napominalka
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind :$PORT --workers 1 --timeout 120 app:app
+    startCommand: gunicorn --bind :$PORT --workers 4 --timeout 120 app:app
     envVars:
       - key: BOT_TOKEN
         value: 7846744690:AAFtYLy4DdsjOtjhmMVnL1knokSO8raJPnY
+      - key: RENDER_SERVICE_NAME
+        value: tg-bot-napominalka.onrender.com
       - key: DB_HOST
-        value: ep-cool-darkness-123456.us-east-2.aws.neon.tech
+        value: ep-purple-wave-a9bx68xy-pooler.gwc.azure.neon.tech
       - key: DB_NAME
-        value: neondb
+        value: бот напоминалка
       - key: DB_USER
-        value: nikita_zhilin
+        value: neondb_owner
       - key: DB_PASSWORD
-        value: ваш_пароль
+        value: npg_QpsFjD8Goc2i
       - key: DB_PORT
         value: "5432"
-      - key: RENDER_SERVICE_NAME
-        value: tg-bot-webhook
