@@ -66,7 +66,30 @@ async def create_application():
         fallbacks=[]
     )
 
+    # FSM для добавления заметки
+    note_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📝 Добавить заметку$"), ask_note_text)],
+        states={
+            ASK_NOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_note)],
+        },
+        fallbacks=[]
+    )
+
+    # FSM для покупок
+    shopping_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🛍 Добавить элемент$"), ask_list_name)],
+        states={
+            ASK_LIST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delimiter)],
+            ASK_DELIMITER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_items)],
+            ASK_ITEMS: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_items)],
+        },
+        fallbacks=[]
+    )
+
     app.add_handler(reminder_conv)
+    app.add_handler(note_conv)
+    app.add_handler(shopping_conv)
+
     return app
 
 # FSM вспомогательные
@@ -98,21 +121,33 @@ async def start_reminder(update, context):
     return SELECT_YEAR
 
 async def select_month(update, context):
-    context.user_data['year'] = int(update.message.text)
-    await update.message.reply_text("Выбери месяц:", reply_markup=get_month_keyboard())
-    return SELECT_MONTH
+    try:
+        context.user_data['year'] = int(update.message.text)
+        await update.message.reply_text("Выбери месяц:", reply_markup=get_month_keyboard())
+        return SELECT_MONTH
+    except ValueError:
+        await update.message.reply_text("⛔ Введи число (год), а не текст")
+        return SELECT_YEAR
 
 async def select_day(update, context):
-    context.user_data['month'] = int(update.message.text)
-    year = context.user_data['year']
-    month = context.user_data['month']
-    await update.message.reply_text("Выбери день:", reply_markup=get_day_keyboard(year, month))
-    return SELECT_DAY
+    try:
+        context.user_data['month'] = int(update.message.text)
+        year = context.user_data['year']
+        month = context.user_data['month']
+        await update.message.reply_text("Выбери день:", reply_markup=get_day_keyboard(year, month))
+        return SELECT_DAY
+    except ValueError:
+        await update.message.reply_text("⛔ Введи число (месяц), а не текст")
+        return SELECT_MONTH
 
 async def select_time(update, context):
-    context.user_data['day'] = int(update.message.text)
-    await update.message.reply_text("Выбери время:", reply_markup=get_time_keyboard())
-    return SELECT_TIME
+    try:
+        context.user_data['day'] = int(update.message.text)
+        await update.message.reply_text("Выбери время:", reply_markup=get_time_keyboard())
+        return SELECT_TIME
+    except ValueError:
+        await update.message.reply_text("⛔ Введи число (день), а не текст")
+        return SELECT_DAY
 
 async def enter_text(update, context):
     time_input = update.message.text
@@ -169,6 +204,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выбери, что хочешь сделать:",
         reply_markup=get_main_menu()
     )
+
+# Шаги FSM для заметки и покупок
+
+async def ask_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✍️ Введи текст заметки:")
+    return ASK_NOTE_TEXT
+
+async def save_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+    add_note(user_id, text)
+    await update.message.reply_text("📝 Заметка сохранена!")
+    return ConversationHandler.END
+
+async def ask_list_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📋 Введи название списка:")
+    return ASK_LIST_NAME
+
+async def ask_delimiter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['list_name'] = update.message.text
+    await update.message.reply_text("Как ты хочешь разделить элементы? Введи символ (например , или /):")
+    return ASK_DELIMITER
+
+async def ask_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['delimiter'] = update.message.text
+    await update.message.reply_text("🛍 Введи элементы списка одним сообщением:")
+    return ASK_ITEMS
+
+async def save_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    list_name = context.user_data['list_name']
+    delimiter = context.user_data['delimiter']
+    items = update.message.text.split(delimiter)
+    for item in items:
+        add_shopping_item(user_id, list_name, item.strip())
+    await update.message.reply_text("✅ Элементы добавлены!")
+    return ConversationHandler.END
 
 # Webhook обработка
 async def process_update(update_data, application):
