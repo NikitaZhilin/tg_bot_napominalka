@@ -9,7 +9,7 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import (
     init_db, add_note, add_shopping_item, add_reminder,
-    is_admin, get_all_users, get_all_lists
+    is_admin, get_all_users, get_all_lists, get_all_reminders
 )
 
 from calendar import monthrange
@@ -38,6 +38,18 @@ async def create_application():
     scheduler = AsyncIOScheduler()
     app.job_queue.scheduler = scheduler
     scheduler.start()
+
+    # ⏰ Перезапуск напоминаний из БД
+    now = datetime.now()
+    for r in get_all_reminders():
+        reminder_id, user_id, text, remind_at, chat_id = r
+        if remind_at > now:
+            app.job_queue.run_once(
+                send_reminder,
+                remind_at,
+                data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
+            )
+            logger.info(f"🔁 Перезапланировано: {remind_at} — {text}")
 
     app.add_handler(CommandHandler("start", start))
 
@@ -131,7 +143,7 @@ async def save_reminder(update, context):
     minute = context.user_data['minute']
 
     remind_time = datetime(year, month, day, hour, minute)
-    reminder_id = add_reminder(user_id, text, remind_time)
+    reminder_id = add_reminder(user_id, text, remind_time, chat_id)
 
     context.job_queue.run_once(
         callback=send_reminder,
@@ -145,8 +157,7 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
-    from telegram import Update
-
-    async def process_update(update_data, application):
-        update = Update.de_json(update_data, application.bot)
-        await application.process_update(update)
+# Webhook обработка
+async def process_update(update_data, application):
+    update = Update.de_json(update_data, application.bot)
+    await application.process_update(update)
