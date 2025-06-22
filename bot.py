@@ -224,7 +224,7 @@ async def save_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
     add_note(user_id, text)
-    await update.message.reply_text("📝 Заметка сохранена!")
+    await update.message.reply_text("📝 Заметка сохранена!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
 async def ask_list_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,7 +248,7 @@ async def save_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = update.message.text.split(delimiter)
     for item in items:
         add_shopping_item(user_id, list_name, item.strip())
-    await update.message.reply_text("✅ Элементы добавлены!")
+    await update.message.reply_text("✅ Элементы добавлены!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
 # Webhook обработка
