@@ -72,7 +72,7 @@ def add_note(user_id: int, text: str):
 
 def get_all_notes(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text FROM notes WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+        cursor.execute("SELECT * FROM notes WHERE user_id = %s", (user_id,))
         return cursor.fetchall()
 
 def delete_note(note_id: int):
@@ -87,19 +87,21 @@ def add_shopping_item(user_id: int, list_name: str, item: str):
         if row:
             list_id = row["id"]
         else:
-            cursor.execute("INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id", (user_id, list_name))
+            cursor.execute(
+                "INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id",
+                (user_id, list_name)
+            )
             list_id = cursor.fetchone()["id"]
         cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
 
 def get_all_user_lists(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("""
-            SELECT l.id, l.name, STRING_AGG(i.item, ', ') AS items
+            SELECT l.id, l.name, STRING_AGG(i.item, ', ') as items
             FROM shopping_lists l
             LEFT JOIN shopping_items i ON l.id = i.list_id
             WHERE l.user_id = %s
-            GROUP BY l.id, l.name
-            ORDER BY l.name
+            GROUP BY l.id
         """, (user_id,))
         return cursor.fetchall()
 
@@ -117,19 +119,19 @@ def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> 
         )
         return cursor.fetchone()["id"]
 
-def get_all_reminders():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, user_id, text, remind_at, chat_id FROM reminders")
-        return cursor.fetchall()
-
 def get_all_user_reminders(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text, remind_at FROM reminders WHERE user_id = %s ORDER BY remind_at", (user_id,))
+        cursor.execute("SELECT * FROM reminders WHERE user_id = %s", (user_id,))
         return cursor.fetchall()
 
 def delete_reminder(reminder_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("DELETE FROM reminders WHERE id = %s", (reminder_id,))
+
+def get_all_reminders():
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM reminders")
+        return cursor.fetchall()
 
 def is_admin(user_id: int) -> bool:
     return user_id in map(int, os.getenv("ADMINS", "").split(","))
