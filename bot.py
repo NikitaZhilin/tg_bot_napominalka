@@ -1,18 +1,18 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
-    ContextTypes, filters
+    CallbackQueryHandler, ContextTypes, filters
 )
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import (
     init_db, add_note, add_shopping_item, add_reminder,
     is_admin, get_all_users, get_all_lists, get_all_reminders,
-    get_all_notes, get_all_user_lists, get_all_user_reminders
+    get_all_notes, get_all_user_lists, get_all_user_reminders,
+    delete_note, delete_reminder, delete_list
 )
-
 from calendar import monthrange
 
 # Логирование
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 ASK_NOTE_TEXT = 1
 ASK_LIST_NAME, ASK_DELIMITER, ASK_ITEMS = range(2, 5)
 SELECT_YEAR, SELECT_MONTH, SELECT_DAY, SELECT_TIME, ENTER_REMINDER_TEXT = range(5, 10)
-
 user_data_store = {}
 
 async def create_application():
@@ -54,9 +53,10 @@ async def create_application():
             logger.info(f"🔁 Перезапланировано: {remind_at} — {text}")
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^✏️ Мои записи$"), show_user_data))
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
-    # FSM для напоминания по шагам
-    reminder_conv = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^⏰ Установить напоминание$"), start_reminder)],
         states={
             SELECT_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_month)],
@@ -66,19 +66,15 @@ async def create_application():
             ENTER_REMINDER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder)],
         },
         fallbacks=[]
-    )
+    ))
 
-    # FSM для добавления заметки
-    note_conv = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📝 Добавить заметку$"), ask_note_text)],
-        states={
-            ASK_NOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_note)],
-        },
+        states={ASK_NOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_note)]},
         fallbacks=[]
-    )
+    ))
 
-    # FSM для покупок
-    shopping_conv = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🛍 Добавить элемент$"), ask_list_name)],
         states={
             ASK_LIST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delimiter)],
@@ -86,12 +82,7 @@ async def create_application():
             ASK_ITEMS: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_items)],
         },
         fallbacks=[]
-    )
-
-    app.add_handler(MessageHandler(filters.Regex("^✏️ Мои записи$"), show_user_data))
-    app.add_handler(reminder_conv)
-    app.add_handler(note_conv)
-    app.add_handler(shopping_conv)
+    ))
 
     return app
 
@@ -117,7 +108,14 @@ def get_time_keyboard():
         ["21:00", "Друг. время"]
     ], resize_keyboard=True)
 
-# FSM шаги
+def get_main_menu():
+    return ReplyKeyboardMarkup([
+        ["📝 Добавить заметку", "🛍 Добавить элемент"],
+        ["⏰ Установить напоминание"],
+        ["✏️ Мои записи"]
+    ], resize_keyboard=True)
+
+# FSM шаги — Напоминание
 
 async def start_reminder(update, context):
     await update.message.reply_text("Выбери год:", reply_markup=get_year_keyboard())
@@ -135,9 +133,7 @@ async def select_month(update, context):
 async def select_day(update, context):
     try:
         context.user_data['month'] = int(update.message.text)
-        year = context.user_data['year']
-        month = context.user_data['month']
-        await update.message.reply_text("Выбери день:", reply_markup=get_day_keyboard(year, month))
+        await update.message.reply_text("Выбери день:", reply_markup=get_day_keyboard(context.user_data['year'], context.user_data['month']))
         return SELECT_DAY
     except ValueError:
         await update.message.reply_text("⛔ Введи число (месяц), а не текст")
@@ -163,14 +159,11 @@ async def enter_text(update, context):
         context.user_data['minute'] = minute
         await update.message.reply_text("✍️ Введи текст напоминания:")
         return ENTER_REMINDER_TEXT
-    except Exception:
+    except:
         await update.message.reply_text("⛔ Неверный формат. Введи в виде ЧЧ:ММ")
         return SELECT_TIME
 
 async def save_reminder(update, context):
-    from database import add_reminder
-    from telegram.ext import ContextTypes
-
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     text = update.message.text
@@ -179,15 +172,13 @@ async def save_reminder(update, context):
     day = context.user_data['day']
     hour = context.user_data['hour']
     minute = context.user_data['minute']
-
     moscow_tz = timezone(timedelta(hours=3))
     remind_time = datetime(year, month, day, hour, minute, tzinfo=moscow_tz)
     now = datetime.now(moscow_tz)
 
     reminder_id = add_reminder(user_id, text, remind_time, chat_id)
-
     context.application.job_queue.run_once(
-        callback=send_reminder,
+        send_reminder,
         when=(remind_time - now).total_seconds(),
         data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
     )
@@ -198,53 +189,36 @@ async def save_reminder(update, context):
     )
     return ConversationHandler.END
 
-async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
+async def send_reminder(context):
     job = context.job
-    logger.info(f"🚨 Вызвано напоминание: {job.data}")
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
-def get_main_menu():
-    return ReplyKeyboardMarkup([
-        ["📝 Добавить заметку", "🛍 Добавить элемент"],
-        ["⏰ Установить напоминание"],
-        ["✏️ Мои записи"]
-    ], resize_keyboard=True)
+# FSM шаги — Заметки и Покупки
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Привет! Я бот-напоминалка.\n\n"
-        "Выбери, что хочешь сделать:",
-        reply_markup=get_main_menu()
-    )
-
-# Шаги FSM для заметки и покупок
-
-async def ask_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_note_text(update, context):
     await update.message.reply_text("✍️ Введи текст заметки:")
     return ASK_NOTE_TEXT
 
-async def save_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
-    add_note(user_id, text)
+async def save_note(update, context):
+    add_note(update.effective_user.id, update.message.text)
     await update.message.reply_text("📝 Заметка сохранена!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
-async def ask_list_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_list_name(update, context):
     await update.message.reply_text("📋 Введи название списка:")
     return ASK_LIST_NAME
 
-async def ask_delimiter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_delimiter(update, context):
     context.user_data['list_name'] = update.message.text
     await update.message.reply_text("Как ты хочешь разделить элементы? Введи символ (например , или /):")
     return ASK_DELIMITER
 
-async def ask_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_items(update, context):
     context.user_data['delimiter'] = update.message.text
     await update.message.reply_text("🛍 Введи элементы списка одним сообщением:")
     return ASK_ITEMS
 
-async def save_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_items(update, context):
     user_id = update.effective_user.id
     list_name = context.user_data['list_name']
     delimiter = context.user_data['delimiter']
@@ -254,34 +228,65 @@ async def save_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Элементы добавлены!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
-async def show_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Отображение и обработка редактирования/удаления
+
+async def show_user_data(update, context):
     user_id = update.effective_user.id
     notes = get_all_notes(user_id)
     lists = get_all_user_lists(user_id)
     reminders = get_all_user_reminders(user_id)
 
-    text_parts = []
+    if not (notes or lists or reminders):
+        await update.message.reply_text("Нет данных.", reply_markup=get_main_menu())
+        return
 
-    if notes:
-        text_parts.append("📝 Твои заметки:")
-        for note in notes:
-            text_parts.append(f"• {note['text']}")
+    for note in notes:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Удалить", callback_data=f"del_note:{note['id']}")]
+        ])
+        await update.message.reply_text(f"📝 {note['text']}", reply_markup=keyboard)
 
-    if lists:
-        text_parts.append("\n📋 Твои списки:")
-        for lst in lists:
-            text_parts.append(f"• {lst['name']}: {lst['items']}")
+    for lst in lists:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Удалить", callback_data=f"del_list:{lst['id']}")]
+        ])
+        await update.message.reply_text(f"📋 {lst['name']}: {lst['items']}", reply_markup=keyboard)
 
-    if reminders:
-        text_parts.append("\n⏰ Твои напоминания:")
-        for r in reminders:
-            time = r['remind_at'].strftime("%Y-%m-%d %H:%M")
-            text_parts.append(f"• {time} — {r['text']}")
+    for r in reminders:
+        time = r['remind_at'].strftime("%Y-%m-%d %H:%M")
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Удалить", callback_data=f"del_rem:{r['id']}")]
+        ])
+        await update.message.reply_text(f"⏰ {time} — {r['text']}", reply_markup=keyboard)
 
-    final_text = "\n".join(text_parts) if text_parts else "Нет данных."
-    await update.message.reply_text(final_text, reply_markup=get_main_menu())
+async def handle_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("del_note:"):
+        note_id = int(data.split(":")[1])
+        delete_note(note_id)
+        await query.edit_message_text("✅ Заметка удалена")
+
+    elif data.startswith("del_list:"):
+        list_id = int(data.split(":")[1])
+        delete_list(list_id)
+        await query.edit_message_text("✅ Список удалён")
+
+    elif data.startswith("del_rem:"):
+        reminder_id = int(data.split(":")[1])
+        delete_reminder(reminder_id)
+
+        for job in context.job_queue.jobs():
+            if job.data and job.data.get("reminder_id") == reminder_id:
+                job.schedule_removal()
+                logger.info(f"🗑 Удалено из JobQueue: reminder_id={reminder_id}")
+
+        await query.edit_message_text("✅ Напоминание удалено")
 
 # Webhook обработка
+
 async def process_update(update_data, application):
     update = Update.de_json(update_data, application.bot)
     await application.process_update(update)
