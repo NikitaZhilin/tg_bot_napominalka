@@ -1,228 +1,110 @@
 import os
-import logging
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import logging
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-db_logger = logging.getLogger("db")
+load_dotenv()
+logger = logging.getLogger("db")
 
-# Подключение к базе данных
-def get_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        port=os.getenv("DB_PORT"),
-        sslmode="require"
-    )
+conn = psycopg2.connect(
+    host=os.getenv("DB_HOST"),
+    database=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    port=os.getenv("DB_PORT"),
+    sslmode="require"
+)
+
+cursor = conn.cursor()
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS notes (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS shopping_items (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                item TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reminders (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                reminder_time TIMESTAMP NOT NULL
-            );
-        """)
-        conn.commit()
-        db_logger.info("✅ Таблицы успешно инициализированы")
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при инициализации таблиц: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            is_admin BOOLEAN DEFAULT FALSE
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            text TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shopping_lists (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            name TEXT
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shopping_items (
+            id SERIAL PRIMARY KEY,
+            list_id INTEGER REFERENCES shopping_lists(id),
+            item TEXT
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            text TEXT,
+            remind_at TIMESTAMP
+        );
+    """)
+    conn.commit()
+    logger.info("✅ Таблицы успешно инициализированы")
 
-# Заметки
+def ensure_user(user_id):
+    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+    if cursor.fetchone() is None:
+        cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
+        conn.commit()
+
+def is_admin(user_id):
+    cursor.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    result = cursor.fetchone()
+    return result and result[0]
+
+def get_all_users():
+    cursor.execute("SELECT user_id FROM users")
+    return cursor.fetchall()
+
+def get_all_lists():
+    cursor.execute("SELECT name, user_id FROM shopping_lists")
+    return cursor.fetchall()
+
 def add_note(user_id, text):
-    db_logger.info(f"📥 Добавление заметки: user_id={user_id}, text='{text}'")
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO notes (user_id, text) VALUES (%s, %s)",
-            (user_id, text)
-        )
+    ensure_user(user_id)
+    cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
+    conn.commit()
+
+def add_shopping_item(user_id, raw):
+    ensure_user(user_id)
+    if ':' in raw:
+        list_name, item = [s.strip() for s in raw.split(':', 1)]
+    else:
+        list_name, item = 'Общий', raw.strip()
+
+    cursor.execute("SELECT id FROM shopping_lists WHERE user_id = %s AND name = %s", (user_id, list_name))
+    row = cursor.fetchone()
+    if row:
+        list_id = row[0]
+    else:
+        cursor.execute("INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id", (user_id, list_name))
+        list_id = cursor.fetchone()[0]
         conn.commit()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при добавлении заметки: {e}")
-    finally:
-        cursor.close()
-        conn.close()
 
-def get_notes(user_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, text FROM notes WHERE user_id = %s ORDER BY created_at DESC",
-            (user_id,)
-        )
-        return cursor.fetchall()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при получении заметок: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
+    cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
+    conn.commit()
 
-def delete_note(user_id, note_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM notes WHERE user_id = %s AND id = %s",
-            (user_id, note_id)
-        )
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        return deleted
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при удалении заметки: {e}")
-        return False
-    finally:
-        cursor.close()
-        conn.close()
-
-# Покупки
-def add_shopping_item(user_id, item):
-    db_logger.info(f"🛒 Добавление покупки: user_id={user_id}, item='{item}'")
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO shopping_items (user_id, item) VALUES (%s, %s)",
-            (user_id, item)
-        )
-        conn.commit()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при добавлении покупки: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_shopping_items(user_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, item FROM shopping_items WHERE user_id = %s ORDER BY created_at DESC",
-            (user_id,)
-        )
-        return cursor.fetchall()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при получении покупок: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
-
-def delete_shopping_item(user_id, item_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM shopping_items WHERE user_id = %s AND id = %s",
-            (user_id, item_id)
-        )
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        return deleted
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при удалении покупки: {e}")
-        return False
-    finally:
-        cursor.close()
-        conn.close()
-
-def clear_shopping_items(user_id):
-    db_logger.info(f"🧹 Очистка списка покупок: user_id={user_id}")
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM shopping_items WHERE user_id = %s",
-            (user_id,)
-        )
-        conn.commit()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при очистке списка покупок: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-# Напоминания
-def add_reminder(user_id, text, reminder_time):
-    db_logger.info(f"⏰ Добавление напоминания: user_id={user_id}, text='{text}', time={reminder_time}")
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO reminders (user_id, text, reminder_time) VALUES (%s, %s, %s) RETURNING id",
-            (user_id, text, reminder_time)
-        )
-        reminder_id = cursor.fetchone()[0]
-        conn.commit()
-        return reminder_id
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при добавлении напоминания: {e}")
-        return None
-    finally:
-        cursor.close()
-        conn.close()
-
-def get_reminders(user_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, text, reminder_time FROM reminders WHERE user_id = %s ORDER BY reminder_time",
-            (user_id,)
-        )
-        return cursor.fetchall()
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при получении напоминаний: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
-
-def delete_reminder(reminder_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM reminders WHERE id = %s",
-            (reminder_id,)
-        )
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        return deleted
-    except Exception as e:
-        db_logger.error(f"❌ Ошибка при удалении напоминания: {e}")
-        return False
-    finally:
-        cursor.close()
-        conn.close()
+def add_reminder(user_id, text, remind_at: datetime):
+    ensure_user(user_id)
+    cursor.execute("INSERT INTO reminders (user_id, text, remind_at) VALUES (%s, %s, %s) RETURNING id",
+                   (user_id, text, remind_at))
+    reminder_id = cursor.fetchone()[0]
+    conn.commit()
+    return reminder_id

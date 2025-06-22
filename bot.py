@@ -6,7 +6,10 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from datetime import datetime
-from database import init_db, add_note, add_shopping_item, add_reminder
+from database import (
+    init_db, add_note, add_shopping_item, add_reminder,
+    is_admin, get_all_users, get_all_lists
+)
 
 # Логирование
 logging.basicConfig(
@@ -32,10 +35,15 @@ async def create_application():
 
     # Общий старт
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("users", list_users))
+    app.add_handler(CommandHandler("lists", list_all_lists))
+    app.add_handler(MessageHandler(filters.Regex("^📋 Просмотр пользователей$"), list_users))
+    app.add_handler(MessageHandler(filters.Regex("^📂 Списки$"), list_all_lists))
 
     # FSM Заметки
     note_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^\ud83c\udfdd\ufe0f Добавить заметку$"), start_note)],
+        entry_points=[MessageHandler(filters.Regex("^📝 Добавить заметку$"), start_note)],
         states={
             ASK_NOTE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_note)]
         },
@@ -44,7 +52,7 @@ async def create_application():
 
     # FSM Покупки
     shopping_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^\ud83d\udecd Добавить элемент$"), start_shopping)],
+        entry_points=[MessageHandler(filters.Regex("^🛒 Добавить элемент$"), start_shopping)],
         states={
             ASK_LIST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_delimiter)],
             ASK_DELIMITER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_items)],
@@ -55,7 +63,7 @@ async def create_application():
 
     # FSM Напоминания
     reminder_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^\u23f0 Установить напоминание$"), start_reminder)],
+        entry_points=[MessageHandler(filters.Regex("^⏰ Установить напоминание$"), start_reminder)],
         states={
             ASK_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_reminder_text)],
             ASK_REMINDER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder)],
@@ -70,13 +78,41 @@ async def create_application():
     return app
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     keyboard = [[
-        KeyboardButton("\ud83c\udfdd\ufe0f Добавить заметку"),
-        KeyboardButton("\ud83d\udecd Добавить элемент"),
-        KeyboardButton("\u23f0 Установить напоминание")
+        KeyboardButton("📝 Добавить заметку"),
+        KeyboardButton("🛒 Добавить элемент"),
+        KeyboardButton("⏰ Установить напоминание")
     ]]
+    if is_admin(user_id):
+        keyboard.append([KeyboardButton("📋 Просмотр пользователей"), KeyboardButton("📂 Списки")])
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+    await update.message.reply_text("🔐 Админ-команды:\n/users — список пользователей\n/lists — список всех списков")
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Нет доступа")
+        return
+    users = get_all_users()
+    text = "👤 Все пользователи:\n" + "\n".join(f"ID {u[0]}" for u in users)
+    await update.message.reply_text(text)
+
+async def list_all_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Нет доступа")
+        return
+    lists = get_all_lists()
+    text = "📦 Все списки:\n" + "\n".join(f"{r[0]} (владелец {r[1]})" for r in lists)
+    await update.message.reply_text(text)
 
 # -------------------------- Заметки --------------------------
 async def start_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
