@@ -5,7 +5,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters
 )
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import (
     init_db, add_note, add_shopping_item, add_reminder,
@@ -40,7 +40,8 @@ async def create_application():
     scheduler.start()
 
     # ⏰ Перезапуск напоминаний из БД
-    now = datetime.now()
+    moscow_tz = timezone(timedelta(hours=3))
+    now = datetime.now(moscow_tz)
     for r in get_all_reminders():
         reminder_id, user_id, text, remind_at, chat_id = r
         if remind_at > now:
@@ -177,12 +178,15 @@ async def save_reminder(update, context):
     hour = context.user_data['hour']
     minute = context.user_data['minute']
 
-    remind_time = datetime(year, month, day, hour, minute)
+    moscow_tz = timezone(timedelta(hours=3))
+    remind_time = datetime(year, month, day, hour, minute, tzinfo=moscow_tz)
+    now = datetime.now(moscow_tz)
+
     reminder_id = add_reminder(user_id, text, remind_time, chat_id)
 
-    context.application.job_queue.run_once(  # исправлено здесь
+    context.application.job_queue.run_once(
         callback=send_reminder,
-        when=remind_time,
+        when=(remind_time - now).total_seconds(),
         data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
     )
     await update.message.reply_text(f"🔔 Напоминание установлено на {remind_time.strftime('%Y-%m-%d %H:%M')}")
@@ -190,6 +194,7 @@ async def save_reminder(update, context):
 
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
+    logger.info(f"🚨 Вызвано напоминание: {job.data}")
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
 def get_main_menu():
