@@ -1,26 +1,31 @@
 import os
 import logging
-import asyncio
-from flask import Flask, request
+from fastapi import FastAPI, Request
 from dotenv import load_dotenv
-from bot import create_application
+from bot import create_application, process_update
 from telegram import Update
 import psycopg2
 
 load_dotenv()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-loop = asyncio.get_event_loop()
-bot_app = loop.run_until_complete(create_application())
+app = FastAPI()
+bot_app = None  # глобальная переменная
 
-@app.route("/", methods=["GET"])
-def root():
-    return {"status": "ok"}
+@app.on_event("startup")
+async def startup_event():
+    global bot_app
+    bot_app = await create_application()
+    logger.info("Бот инициализирован")
 
-@app.route("/check_db", methods=["GET"])
-def check_db():
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Telegram bot is running"}
+
+@app.get("/check_db")
+async def check_db():
     try:
         conn = psycopg2.connect(
             host=os.getenv("DB_HOST"),
@@ -33,28 +38,22 @@ def check_db():
         conn.close()
         return {"status": "ok", "db_connection": True}
     except Exception as e:
-        logger.error(f"DB Error: {e}")
-        return {"status": "error", "error": str(e)}, 500
+        logger.error(f"Database connection error: {e}")
+        return {"status": "error", "db_connection": False, "error": str(e)}
 
-@app.route("/setwebhook", methods=["GET"])
-def set_webhook():
+@app.get("/setwebhook")
+async def set_webhook():
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{os.getenv('BOT_TOKEN')}"
     try:
-        loop.run_until_complete(bot_app.bot.set_webhook(webhook_url))
+        await bot_app.bot.set_webhook(webhook_url)
         return {"status": "ok", "webhook": webhook_url}
     except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
-
-@app.route(f"/{os.getenv('BOT_TOKEN')}", methods=["POST"])
-def webhook():
-    try:
-        update_data = request.get_json(force=True)
-        update = Update.de_json(update_data, bot_app.bot)
-        loop.run_until_complete(bot_app.process_update(update))
-        return {"status": "ok"}
-    except Exception as e:
         logger.error(f"Webhook error: {e}")
-        return {"status": "error", "message": str(e)}, 500
+        return {"status": "error", "message": str(e)}
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+@app.post(f"/{os.getenv('BOT_TOKEN')}")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, bot_app.bot)
+    await process_update(data, bot_app)
+    return {"status": "ok"}
