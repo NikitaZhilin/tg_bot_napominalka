@@ -144,3 +144,9 @@ async def save_reminder(update, context):
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
+
+    from telegram import Update
+
+    async def process_update(update_data, application):
+        update = Update.de_json(update_data, application.bot)
+        await application.process_update(update)
