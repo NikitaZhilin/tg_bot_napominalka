@@ -157,6 +157,19 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
+def get_main_menu():
+    return ReplyKeyboardMarkup([
+        ["📝 Добавить заметку", "🛍 Добавить элемент"],
+        ["⏰ Установить напоминание"]
+    ], resize_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Привет! Я бот-напоминалка.\n\n"
+        "Выбери, что хочешь сделать:",
+        reply_markup=get_main_menu()
+    )
+
 # Webhook обработка
 async def process_update(update_data, application):
     update = Update.de_json(update_data, application.bot)
