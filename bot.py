@@ -6,6 +6,7 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from datetime import datetime
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import (
     init_db, add_note, add_shopping_item, add_reminder,
     is_admin, get_all_users, get_all_lists
@@ -32,6 +33,11 @@ async def create_application():
 
     init_db()
     app = Application.builder().token(token).build()
+
+    # Планировщик для JobQueue
+    scheduler = AsyncIOScheduler()
+    app.job_queue.scheduler = scheduler
+    scheduler.start()
 
     # Общий старт
     app.add_handler(CommandHandler("start", start))
@@ -186,12 +192,21 @@ async def ask_reminder_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Неверный формат. Попробуйте снова: ГГГГ-ММ-ДД ЧЧ:ММ")
         return ASK_DATETIME
 
+async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
+
 async def save_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
     reminder_time = user_data_store.get(user_id, {}).get("reminder_time")
     if reminder_time:
         add_reminder(user_id, text, reminder_time)
+        context.job_queue.run_once(
+            callback=send_reminder,
+            when=reminder_time,
+            data={"chat_id": update.effective_chat.id, "text": text}
+        )
         await update.message.reply_text(f"✅ Напоминание установлено на {reminder_time.strftime('%Y-%m-%d %H:%M')}")
     else:
         await update.message.reply_text("⚠️ Внутренняя ошибка: не удалось сохранить время")
