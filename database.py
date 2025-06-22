@@ -74,23 +74,20 @@ def add_note(user_id: int, text: str):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
 
-def add_shopping_item(user_id: int, list_and_item: str):
+def add_shopping_item(user_id: int, list_name: str, item: str):
     ensure_user(user_id)
-    try:
-        list_name, item = list_and_item.split(":", 1)
-        list_name = list_name.strip()
-        item = item.strip()
-        with get_conn() as conn, conn.cursor() as cursor:
-            cursor.execute("SELECT id FROM shopping_lists WHERE user_id = %s AND name = %s", (user_id, list_name))
-            row = cursor.fetchone()
-            if row:
-                list_id = row["id"]
-            else:
-                cursor.execute("INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id", (user_id, list_name))
-                list_id = cursor.fetchone()["id"]
-            cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
-    except ValueError:
-        logger.error("❌ Ошибка: Неверный формат list_and_item")
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT id FROM shopping_lists WHERE user_id = %s AND name = %s", (user_id, list_name))
+        row = cursor.fetchone()
+        if row:
+            list_id = row["id"]
+        else:
+            cursor.execute(
+                "INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id",
+                (user_id, list_name)
+            )
+            list_id = cursor.fetchone()["id"]
+        cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
 
 def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> int:
     ensure_user(user_id)
