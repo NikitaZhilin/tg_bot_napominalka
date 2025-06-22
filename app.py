@@ -54,7 +54,19 @@ async def check_db():
 
 @app.post(f"/{os.getenv('BOT_TOKEN')}")
 async def telegram_webhook(req: Request):
-    data = await req.json()
-    update = Update.de_json(data, bot_app.bot)
-    await process_update(data, bot_app)
-    return {"status": "ok"}
+    try:
+        data = await req.json()
+        logger.info(f"🔥 Входящее обновление: {data}")
+
+        update = Update.de_json(data, bot_app.bot)
+
+        if not update:
+            logger.warning("⚠️ update is None!")
+            return {"status": "error", "message": "Invalid update"}, 400
+
+        await process_update(data, bot_app)
+
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"❌ Ошибка в webhook: {e}")
+        return {"status": "error", "message": str(e)}, 500
