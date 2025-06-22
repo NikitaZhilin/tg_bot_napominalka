@@ -180,7 +180,7 @@ async def save_reminder(update, context):
     remind_time = datetime(year, month, day, hour, minute)
     reminder_id = add_reminder(user_id, text, remind_time, chat_id)
 
-    context.job_queue.run_once(
+    context.application.job_queue.run_once(  # исправлено здесь
         callback=send_reminder,
         when=remind_time,
         data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
