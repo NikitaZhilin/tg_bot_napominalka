@@ -189,7 +189,11 @@ async def save_reminder(update, context):
         when=(remind_time - now).total_seconds(),
         data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
     )
-    await update.message.reply_text(f"🔔 Напоминание установлено на {remind_time.strftime('%Y-%m-%d %H:%M')}")
+
+    await update.message.reply_text(
+        f"🔔 Напоминание установлено на {remind_time.strftime('%Y-%m-%d %H:%M')}",
+        reply_markup=get_main_menu()
+    )
     return ConversationHandler.END
 
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
