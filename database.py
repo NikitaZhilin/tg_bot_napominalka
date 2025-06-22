@@ -74,6 +74,11 @@ def add_note(user_id: int, text: str):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
 
+def get_all_notes(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT text FROM notes WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+        return cursor.fetchall()
+
 def add_shopping_item(user_id: int, list_name: str, item: str):
     ensure_user(user_id)
     with get_conn() as conn, conn.cursor() as cursor:
@@ -100,8 +105,8 @@ def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> 
 
 def get_all_reminders():
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM reminders")
-        return cursor.fetchall()
+        cursor.execute("SELECT id, user_id, text, remind_at, chat_id FROM reminders")
+        return [(r['id'], r['user_id'], r['text'], r['remind_at'], r['chat_id']) for r in cursor.fetchall()]
 
 def is_admin(user_id: int) -> bool:
     return user_id in map(int, os.getenv("ADMINS", "").split(","))
@@ -120,4 +125,23 @@ def get_all_lists():
             LEFT JOIN shopping_items i ON l.id = i.list_id
             ORDER BY u.user_id, l.name
         """)
+        return cursor.fetchall()
+
+def get_all_user_lists(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT l.name, array_agg(i.item) AS items
+            FROM shopping_lists l
+            LEFT JOIN shopping_items i ON l.id = i.list_id
+            WHERE l.user_id = %s
+            GROUP BY l.name
+        """, (user_id,))
+        return cursor.fetchall()
+
+def get_all_user_reminders(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT text, remind_at FROM reminders
+            WHERE user_id = %s ORDER BY remind_at
+        """, (user_id,))
         return cursor.fetchall()
