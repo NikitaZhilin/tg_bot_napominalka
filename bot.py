@@ -9,7 +9,8 @@ from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import (
     init_db, add_note, add_shopping_item, add_reminder,
-    is_admin, get_all_users, get_all_lists, get_all_reminders
+    is_admin, get_all_users, get_all_lists, get_all_reminders,
+    get_all_notes, get_all_user_lists, get_all_user_reminders
 )
 
 from calendar import monthrange
@@ -87,6 +88,7 @@ async def create_application():
         fallbacks=[]
     )
 
+    app.add_handler(MessageHandler(filters.Regex("^✏️ Мои записи$"), show_user_data))
     app.add_handler(reminder_conv)
     app.add_handler(note_conv)
     app.add_handler(shopping_conv)
@@ -204,7 +206,8 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
 def get_main_menu():
     return ReplyKeyboardMarkup([
         ["📝 Добавить заметку", "🛍 Добавить элемент"],
-        ["⏰ Установить напоминание"]
+        ["⏰ Установить напоминание"],
+        ["✏️ Мои записи"]
     ], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,6 +253,33 @@ async def save_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_shopping_item(user_id, list_name, item.strip())
     await update.message.reply_text("✅ Элементы добавлены!", reply_markup=get_main_menu())
     return ConversationHandler.END
+
+async def show_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    notes = get_all_notes(user_id)
+    lists = get_all_user_lists(user_id)
+    reminders = get_all_user_reminders(user_id)
+
+    text_parts = []
+
+    if notes:
+        text_parts.append("📝 Твои заметки:")
+        for note in notes:
+            text_parts.append(f"• {note['text']}")
+
+    if lists:
+        text_parts.append("\n📋 Твои списки:")
+        for lst in lists:
+            text_parts.append(f"• {lst['name']}: {lst['items']}")
+
+    if reminders:
+        text_parts.append("\n⏰ Твои напоминания:")
+        for r in reminders:
+            time = r['remind_at'].strftime("%Y-%m-%d %H:%M")
+            text_parts.append(f"• {time} — {r['text']}")
+
+    final_text = "\n".join(text_parts) if text_parts else "Нет данных."
+    await update.message.reply_text(final_text, reply_markup=get_main_menu())
 
 # Webhook обработка
 async def process_update(update_data, application):
