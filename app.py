@@ -12,13 +12,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-bot_app = None  # глобальная переменная
+bot_app = None  # глобальный бот
 
 @app.on_event("startup")
 async def startup_event():
     global bot_app
     bot_app = await create_application()
-    logger.info("Бот инициализирован")
+    logger.info("✅ Бот инициализирован")
+
+    # Установка webhook
+    token = os.getenv("BOT_TOKEN")
+    domain = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    webhook_url = f"https://{domain}/{token}"
+
+    try:
+        await bot_app.bot.set_webhook(webhook_url)
+        logger.info(f"✅ Webhook установлен: {webhook_url}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при установке webhook: {e}")
 
 @app.get("/")
 async def root():
@@ -40,16 +51,6 @@ async def check_db():
     except Exception as e:
         logger.error(f"Database connection error: {e}")
         return {"status": "error", "db_connection": False, "error": str(e)}
-
-@app.get("/setwebhook")
-async def set_webhook():
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{os.getenv('BOT_TOKEN')}"
-    try:
-        await bot_app.bot.set_webhook(webhook_url)
-        return {"status": "ok", "webhook": webhook_url}
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return {"status": "error", "message": str(e)}
 
 @app.post(f"/{os.getenv('BOT_TOKEN')}")
 async def telegram_webhook(req: Request):
