@@ -1,11 +1,9 @@
 import os
 import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
-    InputTextMessageContent
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, InlineQueryHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.date import DateTrigger
 from database import (
     init_db,
     add_note,
@@ -20,26 +18,17 @@ from database import (
     delete_reminder,
 )
 
-# Настройка логирования
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 async def create_application():
-    """Создание и инициализация приложения Telegram бота."""
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise ValueError("BOT_TOKEN is not set")
 
-    # Инициализация базы данных
     init_db()
-
-    # Создание приложения
     application = Application.builder().token(token).build()
 
-    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("addnote", add_note_command))
@@ -55,25 +44,19 @@ async def create_application():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(InlineQueryHandler(inline_query))
 
-    # Инициализация приложения
     await application.initialize()
 
-    # Инициализация планировщика
     scheduler = AsyncIOScheduler()
     application.job_queue.scheduler = scheduler
     scheduler.start()
 
     return application
 
-
 async def process_update(update_data, application):
-    """Обработка обновлений от Telegram."""
     update = Update.de_json(update_data, application.bot)
     await application.process_update(update)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /start."""
     keyboard = [
         [InlineKeyboardButton("Добавить заметку", switch_inline_query_current_chat="/addnote ")],
         [InlineKeyboardButton("Добавить элемент", switch_inline_query_current_chat="/additem ")],
@@ -82,9 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Добро пожаловать! Выберите действие:", reply_markup=reply_markup)
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /help."""
     help_text = (
         "/start - Запустить бота\n"
         "/help - Показать помощь\n"
@@ -101,18 +82,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
     await update.message.reply_text(help_text)
 
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка нажатий на кнопки."""
     query = update.callback_query
     command = query.data
     await query.answer()
     await query.message.reply_text(f"Введите: {command}")
     await query.message.delete()
 
-
 async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /addnote."""
     if not context.args:
         await update.message.reply_text("Укажите текст заметки: /addnote <текст>")
         return
@@ -121,9 +98,7 @@ async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     add_note(user_id, note_text)
     await update.message.reply_text(f"Заметка '{note_text}' добавлена!")
 
-
 async def list_notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /listnotes."""
     user_id = update.effective_user.id
     notes = get_notes(user_id)
     if not notes:
@@ -132,9 +107,7 @@ async def list_notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     response = "\n".join(f"ID: {note[0]} | {note[1]}" for note in notes)
     await update.message.reply_text(f"Ваши заметки:\n{response}")
 
-
 async def delete_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /deletenote."""
     if not context.args:
         await update.message.reply_text("Укажите ID заметки: /deletenote <id>")
         return
@@ -148,9 +121,7 @@ async def delete_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except ValueError:
         await update.message.reply_text("ID должен быть числом.")
 
-
 async def add_shopping_item_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /additem."""
     if not context.args:
         await update.message.reply_text("Укажите название элемента: /additem <название>")
         return
@@ -159,9 +130,7 @@ async def add_shopping_item_command(update: Update, context: ContextTypes.DEFAUL
     add_shopping_item(user_id, item_name)
     await update.message.reply_text(f"Элемент '{item_name}' добавлен в список!")
 
-
 async def list_shopping_items_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /listitems."""
     user_id = update.effective_user.id
     items = get_shopping_items(user_id)
     if not items:
@@ -170,9 +139,7 @@ async def list_shopping_items_command(update: Update, context: ContextTypes.DEFA
     response = "\n".join(f"ID: {item[0]} | {item[1]}" for item in items)
     await update.message.reply_text(f"Список покупок:\n{response}")
 
-
 async def delete_shopping_item_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /deleteitem."""
     if not context.args:
         await update.message.reply_text("Укажите ID элемента: /deleteitem <id>")
         return
@@ -186,16 +153,12 @@ async def delete_shopping_item_command(update: Update, context: ContextTypes.DEF
     except ValueError:
         await update.message.reply_text("ID должен быть числом.")
 
-
 async def clear_shopping_items_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /clearitems."""
     user_id = update.effective_user.id
     clear_shopping_items(user_id)
     await update.message.reply_text("Список покупок очищен!")
 
-
 async def set_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /setreminder."""
     if len(context.args) < 3:
         await update.message.reply_text("Используйте: /setreminder ГГГГ-ММ-ДД ЧЧ:ММ <текст>")
         return
@@ -216,16 +179,15 @@ async def set_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except ValueError:
         await update.message.reply_text("Неверный формат даты/времени. Используйте: ГГГГ-ММ-ДД ЧЧ:ММ")
 
-
 async def send_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправка напоминания."""
     job = context.job
-    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
+    try:
+        await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
+    except Exception as e:
+        logger.warning(f"Ошибка при отправке напоминания: {e}")
     delete_reminder(job.data["reminder_id"])
 
-
 async def list_reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /listreminders."""
     user_id = update.effective_user.id
     reminders = get_reminders(user_id)
     if not reminders:
@@ -234,9 +196,7 @@ async def list_reminders_command(update: Update, context: ContextTypes.DEFAULT_T
     response = "\n".join(f"ID: {r[0]} | {r[2]}: {r[1]}" for r in reminders)
     await update.message.reply_text(f"Ваши напоминания:\n{response}")
 
-
 async def delete_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка команды /deletereminder."""
     if not context.args:
         await update.message.reply_text("Укажите ID напоминания: /deletereminder <id>")
         return
@@ -249,33 +209,13 @@ async def delete_reminder_command(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         await update.message.reply_text("ID должен быть числом.")
 
-
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка инлайн-запросов."""
     query = update.inline_query.query
     results = []
     if query.startswith("/addnote"):
-        results.append(
-            InlineQueryResultArticle(
-                id="1",
-                title="Добавить заметку",
-                input_message_content=InputTextMessageContent(query)
-            )
-        )
+        results.append(InlineQueryResultArticle(id="1", title="Добавить заметку", input_message_content=InputTextMessageContent(query)))
     elif query.startswith("/additem"):
-        results.append(
-            InlineQueryResultArticle(
-                id="2",
-                title="Добавить элемент",
-                input_message_content=InputTextMessageContent(query)
-            )
-        )
+        results.append(InlineQueryResultArticle(id="2", title="Добавить элемент", input_message_content=InputTextMessageContent(query)))
     elif query.startswith("/setreminder"):
-        results.append(
-            InlineQueryResultArticle(
-                id="3",
-                title="Установить напоминание",
-                input_message_content=InputTextMessageContent(query)
-            )
-        )
+        results.append(InlineQueryResultArticle(id="3", title="Установить напоминание", input_message_content=InputTextMessageContent(query)))
     await update.inline_query.answer(results)
