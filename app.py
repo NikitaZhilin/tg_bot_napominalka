@@ -18,6 +18,7 @@ bot_app = None  # глобальный бот
 async def startup_event():
     global bot_app
     bot_app = await create_application()
+    await bot_app.initialize()  # 💥 ВАЖНО!
     logger.info("✅ Бот инициализирован")
 
     # Установка webhook
