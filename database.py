@@ -1,117 +1,158 @@
 import os
-import psycopg2
 import logging
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ConversationHandler,
+    ContextTypes, filters
+)
 from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-logger = logging.getLogger("db")
-
-conn = psycopg2.connect(
-    host=os.getenv("DB_HOST"),
-    database=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    port=os.getenv("DB_PORT"),
-    sslmode="require"
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from database import (
+    init_db, add_note, add_shopping_item, add_reminder,
+    is_admin, get_all_users, get_all_lists, get_all_reminders
 )
 
-cursor = conn.cursor()
+from calendar import monthrange
 
-def init_db():
-    # ⚠️ Удаление таблиц для разработки (удаляет все данные!)
-    cursor.execute("DROP TABLE IF EXISTS shopping_items")
-    cursor.execute("DROP TABLE IF EXISTS shopping_lists")
-    cursor.execute("DROP TABLE IF EXISTS reminders")
-    cursor.execute("DROP TABLE IF EXISTS notes")
-    cursor.execute("DROP TABLE IF EXISTS users")
+# Логирование
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-    cursor.execute("""
-        CREATE TABLE users (
-            user_id BIGINT PRIMARY KEY,
-            is_admin BOOLEAN DEFAULT FALSE
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE notes (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            text TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE shopping_lists (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            name TEXT
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE shopping_items (
-            id SERIAL PRIMARY KEY,
-            list_id INTEGER REFERENCES shopping_lists(id),
-            item TEXT
-        );
-    """)
-    cursor.execute("""
-        CREATE TABLE reminders (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            text TEXT,
-            remind_at TIMESTAMP
-        );
-    """)
-    conn.commit()
-    logger.info("✅ Таблицы успешно пересозданы")
+# Состояния FSM
+ASK_NOTE_TEXT = 1
+ASK_LIST_NAME, ASK_DELIMITER, ASK_ITEMS = range(2, 5)
+SELECT_YEAR, SELECT_MONTH, SELECT_DAY, SELECT_TIME, ENTER_REMINDER_TEXT = range(5, 10)
 
-def ensure_user(user_id):
-    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-    if cursor.fetchone() is None:
-        cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
-        conn.commit()
+user_data_store = {}
 
-def is_admin(user_id):
-    cursor.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-    result = cursor.fetchone()
-    return result and result[0]
+async def create_application():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN is not set")
 
-def get_all_users():
-    cursor.execute("SELECT user_id FROM users")
-    return cursor.fetchall()
+    init_db()
+    app = Application.builder().token(token).build()
 
-def get_all_lists():
-    cursor.execute("SELECT name, user_id FROM shopping_lists")
-    return cursor.fetchall()
+    scheduler = AsyncIOScheduler()
+    app.job_queue.scheduler = scheduler
+    scheduler.start()
 
-def add_note(user_id, text):
-    ensure_user(user_id)
-    cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
-    conn.commit()
+    # ⏰ Перезапуск напоминаний из БД
+    now = datetime.now()
+    for r in get_all_reminders():
+        reminder_id, user_id, text, remind_at, chat_id = r
+        if remind_at > now:
+            app.job_queue.run_once(
+                send_reminder,
+                remind_at,
+                data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
+            )
+            logger.info(f"🔁 Перезапланировано: {remind_at} — {text}")
 
-def add_shopping_item(user_id, raw):
-    ensure_user(user_id)
-    if ':' in raw:
-        list_name, item = [s.strip() for s in raw.split(':', 1)]
-    else:
-        list_name, item = 'Общий', raw.strip()
+    app.add_handler(CommandHandler("start", start))
 
-    cursor.execute("SELECT id FROM shopping_lists WHERE user_id = %s AND name = %s", (user_id, list_name))
-    row = cursor.fetchone()
-    if row:
-        list_id = row[0]
-    else:
-        cursor.execute("INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id", (user_id, list_name))
-        list_id = cursor.fetchone()[0]
-        conn.commit()
+    # FSM для напоминания по шагам
+    reminder_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^⏰ Установить напоминание$"), start_reminder)],
+        states={
+            SELECT_YEAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_month)],
+            SELECT_MONTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_day)],
+            SELECT_DAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_time)],
+            SELECT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_text)],
+            ENTER_REMINDER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder)],
+        },
+        fallbacks=[]
+    )
 
-    cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
-    conn.commit()
+    app.add_handler(reminder_conv)
+    return app
 
-def add_reminder(user_id, text, remind_at: datetime):
-    ensure_user(user_id)
-    cursor.execute("INSERT INTO reminders (user_id, text, remind_at) VALUES (%s, %s, %s) RETURNING id",
-                   (user_id, text, remind_at))
-    reminder_id = cursor.fetchone()[0]
-    conn.commit()
-    return reminder_id
+# FSM вспомогательные
+
+def get_year_keyboard():
+    now = datetime.now().year
+    return ReplyKeyboardMarkup([[str(now)], [str(now + 1)], [str(now + 2)]], resize_keyboard=True)
+
+def get_month_keyboard():
+    months = [["01", "02", "03"], ["04", "05", "06"], ["07", "08", "09"], ["10", "11", "12"]]
+    return ReplyKeyboardMarkup(months, resize_keyboard=True)
+
+def get_day_keyboard(year, month):
+    days = monthrange(year, month)[1]
+    buttons = [[str(day).zfill(2) for day in range(i, min(i+7, days+1))] for i in range(1, days+1, 7)]
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
+def get_time_keyboard():
+    return ReplyKeyboardMarkup([
+        ["08:00", "09:00", "10:00"],
+        ["12:00", "15:00", "18:00"],
+        ["21:00", "Друг. время"]
+    ], resize_keyboard=True)
+
+# FSM шаги
+
+async def start_reminder(update, context):
+    await update.message.reply_text("Выбери год:", reply_markup=get_year_keyboard())
+    return SELECT_YEAR
+
+async def select_month(update, context):
+    context.user_data['year'] = int(update.message.text)
+    await update.message.reply_text("Выбери месяц:", reply_markup=get_month_keyboard())
+    return SELECT_MONTH
+
+async def select_day(update, context):
+    context.user_data['month'] = int(update.message.text)
+    year = context.user_data['year']
+    month = context.user_data['month']
+    await update.message.reply_text("Выбери день:", reply_markup=get_day_keyboard(year, month))
+    return SELECT_DAY
+
+async def select_time(update, context):
+    context.user_data['day'] = int(update.message.text)
+    await update.message.reply_text("Выбери время:", reply_markup=get_time_keyboard())
+    return SELECT_TIME
+
+async def enter_text(update, context):
+    time_input = update.message.text
+    if time_input.lower().startswith("друг"):
+        await update.message.reply_text("Введи время вручную (например, 14:30):")
+        return SELECT_TIME
+    try:
+        hour, minute = map(int, time_input.split(":"))
+        context.user_data['hour'] = hour
+        context.user_data['minute'] = minute
+        await update.message.reply_text("✍️ Введи текст напоминания:")
+        return ENTER_REMINDER_TEXT
+    except Exception:
+        await update.message.reply_text("⛔ Неверный формат. Введи в виде ЧЧ:ММ")
+        return SELECT_TIME
+
+async def save_reminder(update, context):
+    from database import add_reminder
+    from telegram.ext import ContextTypes
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    text = update.message.text
+    year = context.user_data['year']
+    month = context.user_data['month']
+    day = context.user_data['day']
+    hour = context.user_data['hour']
+    minute = context.user_data['minute']
+
+    remind_time = datetime(year, month, day, hour, minute)
+    reminder_id = add_reminder(user_id, text, remind_time, chat_id)
+
+    context.job_queue.run_once(
+        callback=send_reminder,
+        when=remind_time,
+        data={"chat_id": chat_id, "text": text, "reminder_id": reminder_id}
+    )
+    await update.message.reply_text(f"🔔 Напоминание установлено на {remind_time.strftime('%Y-%m-%d %H:%M')}")
+    return ConversationHandler.END
+
+async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
