@@ -19,14 +19,21 @@ conn = psycopg2.connect(
 cursor = conn.cursor()
 
 def init_db():
+    # ⚠️ Удаление таблиц для разработки (удаляет все данные!)
+    cursor.execute("DROP TABLE IF EXISTS shopping_items")
+    cursor.execute("DROP TABLE IF EXISTS shopping_lists")
+    cursor.execute("DROP TABLE IF EXISTS reminders")
+    cursor.execute("DROP TABLE IF EXISTS notes")
+    cursor.execute("DROP TABLE IF EXISTS users")
+
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             user_id BIGINT PRIMARY KEY,
             is_admin BOOLEAN DEFAULT FALSE
         );
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS notes (
+        CREATE TABLE notes (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             text TEXT,
@@ -34,21 +41,21 @@ def init_db():
         );
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS shopping_lists (
+        CREATE TABLE shopping_lists (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             name TEXT
         );
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS shopping_items (
+        CREATE TABLE shopping_items (
             id SERIAL PRIMARY KEY,
             list_id INTEGER REFERENCES shopping_lists(id),
             item TEXT
         );
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reminders (
+        CREATE TABLE reminders (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             text TEXT,
@@ -56,7 +63,7 @@ def init_db():
         );
     """)
     conn.commit()
-    logger.info("✅ Таблицы успешно инициализированы")
+    logger.info("✅ Таблицы успешно пересозданы")
 
 def ensure_user(user_id):
     cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
