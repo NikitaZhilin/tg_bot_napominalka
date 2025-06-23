@@ -1,9 +1,18 @@
 #!/bin/bash
-echo "📦 Добавляем файлы..."
-git add README.md app.py
 
-echo "📝 Коммитим..."
-git commit -m '✅ Автообновление: README и app.py'
+# Проверка наличия изменений
+if git diff --quiet && git diff --cached --quiet; then
+  echo "🟢 Нет изменений для коммита. Всё актуально."
+  exit 0
+fi
 
-echo "🚀 Пушим в GitHub..."
+echo "🔍 Добавляем все изменения..."
+git add .
+
+echo "📝 Коммитим изменения..."
+git commit -m "🚀 deploy: финальные правки и деплой на Render"
+
+echo "⬆️ Пушим в ветку main..."
 git push origin main
+
+echo "✅ Готово!"
