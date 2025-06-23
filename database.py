@@ -21,6 +21,7 @@ def get_connection():
 def create_list(user_id, name):
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS lists (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, name TEXT NOT NULL)")
     cur.execute("INSERT INTO lists (user_id, name) VALUES (%s, %s) RETURNING id", (user_id, name))
     list_id = cur.fetchone()[0]
     conn.commit()
@@ -31,6 +32,7 @@ def create_list(user_id, name):
 def add_item_to_list(list_id, item):
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS list_items (id SERIAL PRIMARY KEY, list_id INTEGER REFERENCES lists(id) ON DELETE CASCADE, item TEXT NOT NULL)")
     cur.execute("INSERT INTO list_items (list_id, item) VALUES (%s, %s)", (list_id, item))
     conn.commit()
     cur.close()
@@ -39,6 +41,7 @@ def add_item_to_list(list_id, item):
 def get_lists(user_id):
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS lists (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, name TEXT NOT NULL)")
     cur.execute("SELECT id, name FROM lists WHERE user_id = %s", (user_id,))
     rows = cur.fetchall()
     cur.close()
@@ -48,6 +51,7 @@ def get_lists(user_id):
 def get_items_from_list(list_id):
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS list_items (id SERIAL PRIMARY KEY, list_id INTEGER REFERENCES lists(id) ON DELETE CASCADE, item TEXT NOT NULL)")
     cur.execute("SELECT id, item FROM list_items WHERE list_id = %s", (list_id,))
     rows = cur.fetchall()
     cur.close()
@@ -103,6 +107,8 @@ def delete_reminder(reminder_id):
 def get_users():
     conn = get_connection()
     cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS reminders (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, text TEXT NOT NULL, remind_at TIMESTAMP NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS lists (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, name TEXT NOT NULL)")
     cur.execute("SELECT COUNT(DISTINCT user_id) FROM lists")
     lists_users = cur.fetchone()[0]
     cur.execute("SELECT COUNT(DISTINCT user_id) FROM reminders")

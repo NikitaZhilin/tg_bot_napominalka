@@ -26,7 +26,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders")],
         [InlineKeyboardButton("🛠 Админка", callback_data="admin")],
     ]
-    await update.message.reply_text("Выберите действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    if update.message:
+        await update.message.reply_text("Выберите действие:", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("Выберите действие:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==== Списки ====
 
