@@ -23,9 +23,13 @@ def init_db():
     try:
         with get_conn() as conn, conn.cursor() as cursor:
             cursor.execute("DROP TABLE IF EXISTS reminders, notes, shopping_items, shopping_lists, users CASCADE;")
-            cursor.execute("CREATE TABLE users (user_id BIGINT PRIMARY KEY);")
             cursor.execute("""
-                CREATE TABLE notes (
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY
+                );
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notes (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
                     text TEXT NOT NULL,
@@ -33,21 +37,21 @@ def init_db():
                 );
             """)
             cursor.execute("""
-                CREATE TABLE shopping_lists (
+                CREATE TABLE IF NOT EXISTS shopping_lists (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
                     name TEXT NOT NULL
                 );
             """)
             cursor.execute("""
-                CREATE TABLE shopping_items (
+                CREATE TABLE IF NOT EXISTS shopping_items (
                     id SERIAL PRIMARY KEY,
                     list_id INTEGER REFERENCES shopping_lists(id),
                     item TEXT NOT NULL
                 );
             """)
             cursor.execute("""
-                CREATE TABLE reminders (
+                CREATE TABLE IF NOT EXISTS reminders (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
                     text TEXT NOT NULL,
@@ -72,7 +76,7 @@ def add_note(user_id: int, text: str):
 
 def get_all_notes(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM notes WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT id, text FROM notes WHERE user_id = %s", (user_id,))
         return cursor.fetchall()
 
 def delete_note(note_id: int):
@@ -97,7 +101,7 @@ def add_shopping_item(user_id: int, list_name: str, item: str):
 def get_all_user_lists(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("""
-            SELECT l.id, l.name, STRING_AGG(i.item, ', ') as items
+            SELECT l.id, l.name, STRING_AGG(i.item, ', ') AS items
             FROM shopping_lists l
             LEFT JOIN shopping_items i ON l.id = i.list_id
             WHERE l.user_id = %s
@@ -121,7 +125,7 @@ def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> 
 
 def get_all_user_reminders(user_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM reminders WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT id, text, remind_at FROM reminders WHERE user_id = %s", (user_id,))
         return cursor.fetchall()
 
 def delete_reminder(reminder_id: int):
@@ -130,7 +134,7 @@ def delete_reminder(reminder_id: int):
 
 def get_all_reminders():
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM reminders")
+        cursor.execute("SELECT id, user_id, text, remind_at, chat_id FROM reminders")
         return cursor.fetchall()
 
 def is_admin(user_id: int) -> bool:

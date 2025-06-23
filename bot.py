@@ -27,6 +27,40 @@ ASK_LIST_NAME, ASK_DELIMITER, ASK_ITEMS = range(2, 5)
 SELECT_YEAR, SELECT_MONTH, SELECT_DAY, SELECT_TIME, ENTER_REMINDER_TEXT = range(5, 10)
 user_data_store = {}
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Чем займёмся?", reply_markup=get_main_menu())
+
+# --- FSM клавиатуры ---
+
+def get_main_menu():
+    return ReplyKeyboardMarkup([
+        ["📝 Добавить заметку", "🛍 Добавить элемент"],
+        ["⏰ Установить напоминание"],
+        ["✏️ Мои записи"]
+    ], resize_keyboard=True)
+
+def get_year_keyboard():
+    now = datetime.now().year
+    return ReplyKeyboardMarkup([[str(now)], [str(now + 1)], [str(now + 2)]], resize_keyboard=True)
+
+def get_month_keyboard():
+    months = [["01", "02", "03"], ["04", "05", "06"], ["07", "08", "09"], ["10", "11", "12"]]
+    return ReplyKeyboardMarkup(months, resize_keyboard=True)
+
+def get_day_keyboard(year, month):
+    days = monthrange(year, month)[1]
+    buttons = [[str(day).zfill(2) for day in range(i, min(i+7, days+1))] for i in range(1, days+1, 7)]
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
+def get_time_keyboard():
+    return ReplyKeyboardMarkup([
+        ["08:00", "09:00", "10:00"],
+        ["12:00", "15:00", "18:00"],
+        ["21:00", "Друг. время"]
+    ], resize_keyboard=True)
+
+# --- Создание и планирование ---
+
 async def create_application():
     token = os.getenv("BOT_TOKEN")
     if not token:
@@ -86,36 +120,7 @@ async def create_application():
 
     return app
 
-# FSM вспомогательные
-
-def get_year_keyboard():
-    now = datetime.now().year
-    return ReplyKeyboardMarkup([[str(now)], [str(now + 1)], [str(now + 2)]], resize_keyboard=True)
-
-def get_month_keyboard():
-    months = [["01", "02", "03"], ["04", "05", "06"], ["07", "08", "09"], ["10", "11", "12"]]
-    return ReplyKeyboardMarkup(months, resize_keyboard=True)
-
-def get_day_keyboard(year, month):
-    days = monthrange(year, month)[1]
-    buttons = [[str(day).zfill(2) for day in range(i, min(i+7, days+1))] for i in range(1, days+1, 7)]
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
-def get_time_keyboard():
-    return ReplyKeyboardMarkup([
-        ["08:00", "09:00", "10:00"],
-        ["12:00", "15:00", "18:00"],
-        ["21:00", "Друг. время"]
-    ], resize_keyboard=True)
-
-def get_main_menu():
-    return ReplyKeyboardMarkup([
-        ["📝 Добавить заметку", "🛍 Добавить элемент"],
-        ["⏰ Установить напоминание"],
-        ["✏️ Мои записи"]
-    ], resize_keyboard=True)
-
-# FSM шаги — Напоминание
+# --- FSM шаги напоминания ---
 
 async def start_reminder(update, context):
     await update.message.reply_text("Выбери год:", reply_markup=get_year_keyboard())
@@ -193,7 +198,7 @@ async def send_reminder(context):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
-# FSM шаги — Заметки и Покупки
+# --- FSM шаги — заметки и списки ---
 
 async def ask_note_text(update, context):
     await update.message.reply_text("✍️ Введи текст заметки:")
@@ -228,7 +233,7 @@ async def save_items(update, context):
     await update.message.reply_text("✅ Элементы добавлены!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
-# Отображение и обработка редактирования/удаления
+# --- Показ и удаление данных ---
 
 async def show_user_data(update, context):
     user_id = update.effective_user.id
@@ -285,7 +290,7 @@ async def handle_callback(update, context):
 
         await query.edit_message_text("✅ Напоминание удалено")
 
-# Webhook обработка
+# --- Webhook обработка ---
 
 async def process_update(update_data, application):
     update = Update.de_json(update_data, application.bot)
