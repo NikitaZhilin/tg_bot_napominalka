@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Request
 from telegram import Update
 from bot import create_application
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI()
 telegram_app = create_application()
