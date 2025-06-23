@@ -1,169 +1,196 @@
-import logging
-from datetime import datetime
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    CallbackQueryHandler, ContextTypes
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters, ConversationHandler, ContextTypes
 )
-import os
 from database import (
-    add_shopping_item, get_all_user_lists, get_list_by_id,
-    update_list_name, delete_list,
-    add_reminder, get_all_user_reminders, get_reminder_by_id,
-    update_reminder, delete_reminder,
-    get_all_admin_reminders, get_all_lists,
-    is_admin
+    create_list, add_item_to_list, get_lists, get_items_from_list,
+    delete_list, delete_item_from_list,
+    create_reminder, get_reminders, delete_reminder, get_users, get_admins
 )
 from scheduler import schedule_reminder
+from datetime import datetime
 
-logger = logging.getLogger(__name__)
+LIST_NAME, LIST_ITEM, CHOOSE_LIST, EDIT_LIST = range(4)
+REMINDER_TEXT, REMINDER_TIME = range(2)
 
-LIST_NAME, LIST_ITEM, CHOOSE_LIST, EDIT_LIST = range(3)
-REM_TEXT, REM_DATE, REM_TIME, CHOOSE_REMINDER = range(7, 11)
+ADMIN_IDS = os.getenv("ADMIN_IDS", "").split(",")
+
+def is_admin(user_id):
+    return str(user_id) in ADMIN_IDS
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Привет! Я бот-напоминалка. Используй команды:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛍 Списки покупок", callback_data="lists_menu")],
-            [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders_menu")],
-            [InlineKeyboardButton("⚙️ Админка", callback_data="admin_menu")],
-        ])
-    )
+    keyboard = [
+        [InlineKeyboardButton("🛒 Списки", callback_data="lists")],
+        [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders")],
+        [InlineKeyboardButton("🛠 Админка", callback_data="admin")],
+    ]
+    await update.message.reply_text("Выберите действие:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Admin ---
-async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==== Списки ====
+
+async def show_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    lists = get_lists(user_id)
+    keyboard = [
+        [InlineKeyboardButton(lst["name"], callback_data=f"list_{lst['id']}")]
+        for lst in lists
+    ]
+    keyboard.append([InlineKeyboardButton("📦 Новый список", callback_data="new_list")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back")])
+    await query.edit_message_text("Ваши списки:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def new_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text("Введите название списка:")
+    return LIST_NAME
+
+async def save_list_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text
+    user_id = update.message.from_user.id
+    list_id = create_list(user_id, name)
+    context.user_data["current_list_id"] = list_id
+    await update.message.reply_text("Введите первый элемент списка:")
+    return LIST_ITEM
+
+async def add_list_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    item = update.message.text
+    list_id = context.user_data.get("current_list_id")
+    add_item_to_list(list_id, item)
+    await update.message.reply_text("Добавлено. Введите следующий элемент или /done для завершения.")
+    return LIST_ITEM
+
+async def done_adding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Список сохранён.")
+    return ConversationHandler.END
+
+async def open_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    list_id = int(query.data.split("_")[1])
+    context.user_data["edit_list_id"] = list_id
+    items = get_items_from_list(list_id)
+    keyboard = [[InlineKeyboardButton(f"❌ {item['item']}", callback_data=f"delitem_{item['id']}")] for item in items]
+    keyboard.append([InlineKeyboardButton("🗑 Удалить весь список", callback_data=f"dellist_{list_id}")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="lists")])
+    await query.edit_message_text("Содержимое списка:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def delete_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    item_id = int(query.data.split("_")[1])
+    delete_item_from_list(item_id)
+    await open_list(update, context)
+
+async def delete_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    list_id = int(query.data.split("_")[1])
+    delete_list(list_id)
+    await show_lists(update, context)
+
+# ==== Напоминания ====
+
+async def show_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    reminders = get_reminders(user_id)
+    keyboard = [[InlineKeyboardButton(f"❌ {rem['text']}", callback_data=f"delrem_{rem['id']}")] for rem in reminders]
+    keyboard.append([InlineKeyboardButton("➕ Добавить напоминание", callback_data="new_reminder")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="back")])
+    await query.edit_message_text("Ваши напоминания:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def new_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text("Введите текст напоминания:")
+    return REMINDER_TEXT
+
+async def save_reminder_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["reminder_text"] = update.message.text
+    await update.message.reply_text("Когда напомнить? (в формате ГГГГ-ММ-ДД ЧЧ:ММ)")
+    return REMINDER_TIME
+
+async def save_reminder_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        remind_at = datetime.strptime(update.message.text, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await update.message.reply_text("Неверный формат даты. Попробуйте ещё раз.")
+        return REMINDER_TIME
+    text = context.user_data["reminder_text"]
+    user_id = update.message.from_user.id
+    reminder_id = create_reminder(user_id, text, remind_at)
+    schedule_reminder(context.application, user_id, text, remind_at)
+    await update.message.reply_text("Напоминание установлено.")
+    return ConversationHandler.END
+
+async def delete_reminder_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    reminder_id = int(query.data.split("_")[1])
+    delete_reminder(reminder_id)
+    await show_reminders(update, context)
+
+# ==== Админка ====
+
+async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     if not is_admin(user_id):
-        await query.edit_message_text("❌ У вас нет доступа к админке.")
+        await query.edit_message_text("⛔️ Доступ запрещён")
         return
+    users = get_users()
+    admins = get_admins()
+    text = f"👤 Пользователей: {users}\n👮‍♂️ Админов: {admins}"
+    await query.edit_message_text(text)
 
-    await query.edit_message_text(
-        "👤 Админ-панель:\nВыберите категорию:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛍 Все списки", callback_data="admin_lists")],
-            [InlineKeyboardButton("⏰ Все напоминания", callback_data="admin_reminders")],
-        ])
-    )
+# ==== Обработка команд ====
 
-# --- Admin Reminders ---
-async def admin_all_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    reminders = get_all_admin_reminders()
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите команду или используйте кнопки.")
 
-    if not reminders:
-        await query.edit_message_text("⏰ Нет напоминаний.")
-        return
-
-    buttons = []
-    for r in reminders[:50]:
-        text = r['text'][:30].replace('\n', ' ')
-        date = r['remind_at'].strftime('%d.%m %H:%M')
-        buttons.append([InlineKeyboardButton(f"{r['user_id']} – {text} ({date})", callback_data=f"admin_reminder_{r['id']}")])
-    await query.edit_message_text("⏰ Напоминания:", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def admin_reminder_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    reminder_id = int(query.data.split("_")[-1])
-    context.user_data['admin_reminder_id'] = reminder_id
-    reminder = get_reminder_by_id(reminder_id)
-    if not reminder:
-        await query.edit_message_text("❌ Напоминание не найдено.")
-        return
-
-    await query.edit_message_text(
-        f"⏰ Напоминание ID {reminder_id}:\n\n{reminder['text']}\n⏱ {reminder['remind_at'].strftime('%d.%m %H:%M')}",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Удалить", callback_data="admin_delete_reminder")],
-            [InlineKeyboardButton("↩️ Назад", callback_data="admin_reminders")]
-        ])
-    )
-
-async def admin_delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reminder_id = context.user_data.get("admin_reminder_id")
-    delete_reminder(reminder_id)
-    await update.callback_query.answer("🗑 Удалено")
-    await admin_all_reminders(update, context)
-
-# --- Admin Lists ---
-async def admin_all_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    users = get_all_users()
-
-    if not users:
-        await query.edit_message_text("❌ Пользователей нет.")
-        return
-
-    buttons = [
-        [InlineKeyboardButton(f"Пользователь {u['user_id']}", callback_data=f"admin_lists_user_{u['user_id']}")]
-        for u in users[:50]
-    ]
-    await query.edit_message_text("👤 Выберите пользователя:", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def admin_user_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = int(query.data.split("_")[-1])
-    context.user_data["selected_user_id"] = user_id
-
-    lists = get_all_user_lists(user_id)
-    if not lists:
-        await query.edit_message_text(f"🛍 У пользователя {user_id} нет списков.")
-        return
-
-    buttons = [
-        [InlineKeyboardButton(f"{lst['name']}", callback_data=f"admin_list_{user_id}_{lst['name']}")]
-        for lst in lists[:50]
-    ]
-    buttons.append([InlineKeyboardButton("↩️ Назад", callback_data="admin_lists")])
-    await query.edit_message_text(f"🛍 Списки пользователя {user_id}:", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def admin_list_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    _, user_id, name = query.data.split("_", 2)
-    lists = get_all_lists()
-    items = [row['item'] for row in lists if row['user_id'] == int(user_id) and row['name'] == name and row['item']]
-
-    if not items:
-        await query.edit_message_text("❌ Список пуст или не найден.")
-        return
-
-    context.user_data['admin_list'] = (int(user_id), name)
-    text = f"🛍 Список {name} (пользователь {user_id}):\n\n" + '\n'.join(f"• {item}" for item in items)
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Удалить", callback_data="admin_delete_list")],
-            [InlineKeyboardButton("↩️ Назад", callback_data="admin_lists")],
-        ])
-    )
-
-async def admin_delete_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id, name = context.user_data.get("admin_list")
-    all_lists = get_all_user_lists(user_id)
-    list_id = next((l['id'] for l in all_lists if l['name'] == name), None)
-    if list_id:
-        delete_list(list_id)
-    await update.callback_query.answer("🗑 Удалено")
-    await admin_all_lists(update, context)
-
-# --- Register ---
 def create_application_without_notes():
-    app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+    application = Application.builder().token(os.getenv("BOT_TOKEN")).build()
 
-    app.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start))
 
-    app.add_handler(CallbackQueryHandler(admin_menu, pattern="^admin_menu$"))
-    app.add_handler(CallbackQueryHandler(admin_all_reminders, pattern="^admin_reminders$"))
-    app.add_handler(CallbackQueryHandler(admin_reminder_detail, pattern="^admin_reminder_\\d+$"))
-    app.add_handler(CallbackQueryHandler(admin_delete_reminder, pattern="^admin_delete_reminder$"))
-    app.add_handler(CallbackQueryHandler(admin_all_lists, pattern="^admin_lists$"))
-    app.add_handler(CallbackQueryHandler(admin_user_lists, pattern="^admin_lists_user_\\d+$"))
-    app.add_handler(CallbackQueryHandler(admin_list_detail, pattern="^admin_list_\\d+_.+"))
-    app.add_handler(CallbackQueryHandler(admin_delete_list, pattern="^admin_delete_list$"))
+    application.add_handler(CallbackQueryHandler(show_lists, pattern="^lists$"))
+    application.add_handler(CallbackQueryHandler(show_reminders, pattern="^reminders$"))
+    application.add_handler(CallbackQueryHandler(show_admin, pattern="^admin$"))
+    application.add_handler(CallbackQueryHandler(start, pattern="^back$"))
 
-    return app
+    # Списки
+    list_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(new_list, pattern="^new_list$")],
+        states={
+            LIST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_list_name)],
+            LIST_ITEM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_list_item),
+                CommandHandler("done", done_adding)
+            ],
+        },
+        fallbacks=[MessageHandler(filters.COMMAND, fallback)],
+    )
+    application.add_handler(list_conv)
+
+    application.add_handler(CallbackQueryHandler(open_list, pattern="^list_"))
+    application.add_handler(CallbackQueryHandler(delete_item, pattern="^delitem_"))
+    application.add_handler(CallbackQueryHandler(delete_list_handler, pattern="^dellist_"))
+
+    # Напоминания
+    reminder_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(new_reminder, pattern="^new_reminder$")],
+        states={
+            REMINDER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder_text)],
+            REMINDER_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder_time)],
+        },
+        fallbacks=[MessageHandler(filters.COMMAND, fallback)],
+    )
+    application.add_handler(reminder_conv)
+    application.add_handler(CallbackQueryHandler(delete_reminder_handler, pattern="^delrem_"))
+
+    return application
