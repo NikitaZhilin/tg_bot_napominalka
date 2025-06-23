@@ -11,26 +11,23 @@ from database import (
     init_db, add_note, add_shopping_item, add_reminder,
     is_admin, get_all_users, get_all_lists, get_all_reminders,
     get_all_notes, get_all_user_lists, get_all_user_reminders,
-    delete_note, delete_reminder, delete_list
+    delete_note, delete_reminder, delete_list,
+    update_note
 )
 from calendar import monthrange
 
-# Логирование
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Состояния FSM
-ASK_NOTE_TEXT = 1
+ASK_NOTE_TEXT, EDIT_NOTE = range(2)
 ASK_LIST_NAME, ASK_DELIMITER, ASK_ITEMS = range(2, 5)
 SELECT_YEAR, SELECT_MONTH, SELECT_DAY, SELECT_TIME, ENTER_REMINDER_TEXT = range(5, 10)
 user_data_store = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Чем займёмся?", reply_markup=get_main_menu())
-
-# --- FSM клавиатуры ---
 
 def get_main_menu():
     return ReplyKeyboardMarkup([
@@ -59,8 +56,6 @@ def get_time_keyboard():
         ["21:00", "Друг. время"]
     ], resize_keyboard=True)
 
-# --- Создание и планирование ---
-
 async def create_application():
     token = os.getenv("BOT_TOKEN")
     if not token:
@@ -73,7 +68,6 @@ async def create_application():
     app.job_queue.scheduler = scheduler
     scheduler.start()
 
-    # ⏰ Перезапуск напоминаний из БД
     moscow_tz = timezone(timedelta(hours=3))
     now = datetime.now(moscow_tz)
     for r in get_all_reminders():
@@ -118,9 +112,15 @@ async def create_application():
         fallbacks=[]
     ))
 
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(handle_edit_note, pattern="^edit_note:")],
+        states={EDIT_NOTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_edited_note)]},
+        fallbacks=[]
+    ))
+
     return app
 
-# --- FSM шаги напоминания ---
+# --- Напоминания ---
 
 async def start_reminder(update, context):
     await update.message.reply_text("Выбери год:", reply_markup=get_year_keyboard())
@@ -198,7 +198,7 @@ async def send_reminder(context):
     job = context.job
     await context.bot.send_message(chat_id=job.data["chat_id"], text=f"🔔 Напоминание: {job.data['text']}")
 
-# --- FSM шаги — заметки и списки ---
+# --- Заметки и списки ---
 
 async def ask_note_text(update, context):
     await update.message.reply_text("✍️ Введи текст заметки:")
@@ -233,7 +233,7 @@ async def save_items(update, context):
     await update.message.reply_text("✅ Элементы добавлены!", reply_markup=get_main_menu())
     return ConversationHandler.END
 
-# --- Показ и удаление данных ---
+# --- Показ и действия ---
 
 async def show_user_data(update, context):
     user_id = update.effective_user.id
@@ -247,7 +247,10 @@ async def show_user_data(update, context):
 
     for note in notes:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Удалить", callback_data=f"del_note:{note['id']}")]
+            [
+                InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_note:{note['id']}"),
+                InlineKeyboardButton("🗑 Удалить", callback_data=f"del_note:{note['id']}")
+            ]
         ])
         await update.message.reply_text(f"📝 {note['text']}", reply_markup=keyboard)
 
@@ -290,7 +293,19 @@ async def handle_callback(update, context):
 
         await query.edit_message_text("✅ Напоминание удалено")
 
-# --- Webhook обработка ---
+async def handle_edit_note(update, context):
+    query = update.callback_query
+    note_id = int(query.data.split(":")[1])
+    context.user_data['edit_note_id'] = note_id
+    await query.message.reply_text("✏️ Введи новый текст для заметки:")
+    return EDIT_NOTE
+
+async def save_edited_note(update, context):
+    note_id = context.user_data['edit_note_id']
+    new_text = update.message.text
+    update_note(note_id, new_text)
+    await update.message.reply_text("✅ Заметка обновлена!", reply_markup=get_main_menu())
+    return ConversationHandler.END
 
 async def process_update(update_data, application):
     update = Update.de_json(update_data, application.bot)

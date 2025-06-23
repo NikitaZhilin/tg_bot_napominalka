@@ -74,10 +74,9 @@ def add_note(user_id: int, text: str):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
 
-def get_all_notes(user_id: int):
+def update_note(note_id: int, new_text: str):
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text FROM notes WHERE user_id = %s", (user_id,))
-        return cursor.fetchall()
+        cursor.execute("UPDATE notes SET text = %s WHERE id = %s", (new_text, note_id))
 
 def delete_note(note_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
@@ -98,17 +97,6 @@ def add_shopping_item(user_id: int, list_name: str, item: str):
             list_id = cursor.fetchone()["id"]
         cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
 
-def get_all_user_lists(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT l.id, l.name, STRING_AGG(i.item, ', ') AS items
-            FROM shopping_lists l
-            LEFT JOIN shopping_items i ON l.id = i.list_id
-            WHERE l.user_id = %s
-            GROUP BY l.id
-        """, (user_id,))
-        return cursor.fetchall()
-
 def delete_list(list_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("DELETE FROM shopping_items WHERE list_id = %s", (list_id,))
@@ -123,18 +111,34 @@ def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> 
         )
         return cursor.fetchone()["id"]
 
-def get_all_user_reminders(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text, remind_at FROM reminders WHERE user_id = %s", (user_id,))
-        return cursor.fetchall()
-
 def delete_reminder(reminder_id: int):
     with get_conn() as conn, conn.cursor() as cursor:
         cursor.execute("DELETE FROM reminders WHERE id = %s", (reminder_id,))
 
 def get_all_reminders():
     with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, user_id, text, remind_at, chat_id FROM reminders")
+        cursor.execute("SELECT * FROM reminders")
+        return cursor.fetchall()
+
+def get_all_notes(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT id, text FROM notes WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+        return cursor.fetchall()
+
+def get_all_user_lists(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT l.id, l.name, STRING_AGG(i.item, ', ') AS items
+            FROM shopping_lists l
+            LEFT JOIN shopping_items i ON l.id = i.list_id
+            WHERE l.user_id = %s
+            GROUP BY l.id, l.name
+        """, (user_id,))
+        return cursor.fetchall()
+
+def get_all_user_reminders(user_id: int):
+    with get_conn() as conn, conn.cursor() as cursor:
+        cursor.execute("SELECT id, text, remind_at FROM reminders WHERE user_id = %s", (user_id,))
         return cursor.fetchall()
 
 def is_admin(user_id: int) -> bool:
