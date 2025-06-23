@@ -56,18 +56,24 @@ async def save_list_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     list_id = create_list(user_id, name)
     context.user_data["current_list_id"] = list_id
-    await update.message.reply_text("Введите первый элемент списка:")
+    keyboard = [[InlineKeyboardButton("✅ Завершить", callback_data="done_list")]]
+    await update.message.reply_text("Введите элемент списка:", reply_markup=InlineKeyboardMarkup(keyboard))
     return LIST_ITEM
 
 async def add_list_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item = update.message.text
     list_id = context.user_data.get("current_list_id")
     add_item_to_list(list_id, item)
-    await update.message.reply_text("Добавлено. Введите следующий элемент или /done для завершения.")
+    keyboard = [[InlineKeyboardButton("✅ Завершить", callback_data="done_list")]]
+    await update.message.reply_text("Добавлено. Введите следующий элемент:", reply_markup=InlineKeyboardMarkup(keyboard))
     return LIST_ITEM
 
 async def done_adding(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Список сохранён.")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Список сохранён.")
+    else:
+        await update.message.reply_text("Список сохранён.")
     return ConversationHandler.END
 
 async def open_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,7 +180,7 @@ def create_application_without_notes():
             LIST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_list_name)],
             LIST_ITEM: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_list_item),
-                CommandHandler("done", done_adding)
+                CallbackQueryHandler(done_adding, pattern="^done_list$")
             ],
         },
         fallbacks=[MessageHandler(filters.COMMAND, fallback)],
