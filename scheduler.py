@@ -14,7 +14,6 @@ from database import (
     get_all_admin_reminders, get_all_lists,
     is_admin
 )
-from scheduler import schedule_reminder
 
 logger = logging.getLogger(__name__)
 
