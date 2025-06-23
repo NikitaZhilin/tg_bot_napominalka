@@ -22,7 +22,7 @@ def is_admin(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🛒 Списки", callback_data="lists")],
+        [InlineKeyboardButton("🛍 Списки", callback_data="lists")],
         [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders")],
         [InlineKeyboardButton("🛠 Админка", callback_data="admin")],
     ]
@@ -122,7 +122,7 @@ async def save_reminder_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return REMINDER_TIME
     text = context.user_data["reminder_text"]
     user_id = update.message.from_user.id
-    reminder_id = create_reminder(user_id, text, remind_at)
+    create_reminder(user_id, text, remind_at)
     schedule_reminder(context.application, user_id, text, remind_at)
     await update.message.reply_text("Напоминание установлено.")
     return ConversationHandler.END
@@ -146,7 +146,8 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = get_users()
     admins = get_admins()
     text = f"👤 Пользователей: {users}\n👮‍♂️ Админов: {admins}"
-    await query.edit_message_text(text)
+    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="back")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==== Обработка команд ====
 
