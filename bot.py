@@ -3,33 +3,28 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    CallbackQueryHandler, ConversationHandler, ContextTypes
+    CallbackQueryHandler, ContextTypes
 )
 import os
 from database import (
-    add_note, get_all_notes, update_note, delete_note, get_note_by_id,
     add_shopping_item, get_all_user_lists, get_list_by_id,
     update_list_name, delete_list,
     add_reminder, get_all_user_reminders, get_reminder_by_id,
     update_reminder, delete_reminder,
-    get_all_admin_notes, get_all_admin_reminders, get_all_lists,
+    get_all_admin_reminders, get_all_lists,
     is_admin
 )
 from scheduler import schedule_reminder
 
 logger = logging.getLogger(__name__)
 
-# --- States ---
-NOTE_TEXT, EDIT_NOTE, CHOOSE_NOTE = range(3)
-LIST_NAME, LIST_ITEM, CHOOSE_LIST, EDIT_LIST = range(3, 7)
+LIST_NAME, LIST_ITEM, CHOOSE_LIST, EDIT_LIST = range(3)
 REM_TEXT, REM_DATE, REM_TIME, CHOOSE_REMINDER = range(7, 11)
 
-# --- Start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Я бот-напоминалка. Используй команды:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Заметки", callback_data="notes_menu")],
             [InlineKeyboardButton("🛍 Списки покупок", callback_data="lists_menu")],
             [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders_menu")],
             [InlineKeyboardButton("⚙️ Админка", callback_data="admin_menu")],
@@ -48,50 +43,12 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "👤 Админ-панель:\nВыберите категорию:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Все заметки", callback_data="admin_notes")],
             [InlineKeyboardButton("🛍 Все списки", callback_data="admin_lists")],
             [InlineKeyboardButton("⏰ Все напоминания", callback_data="admin_reminders")],
         ])
     )
 
-async def admin_all_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    notes = get_all_admin_notes()
-
-    if not notes:
-        await query.edit_message_text("📝 Нет заметок.")
-        return
-
-    buttons = []
-    for n in notes[:50]:
-        text = n['text'][:30].replace('\n', ' ')
-        buttons.append([InlineKeyboardButton(f"{n['user_id']} – {text}", callback_data=f"admin_note_{n['id']}")])
-    await query.edit_message_text("📝 Заметки:", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def admin_note_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    note_id = int(query.data.split("_")[-1])
-    context.user_data['admin_note_id'] = note_id
-    note = get_note_by_id(note_id)
-    if not note:
-        await query.edit_message_text("❌ Заметка не найдена.")
-        return
-
-    await query.edit_message_text(
-        f"📝 Заметка ID {note_id}:\n\n{note['text']}",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑 Удалить", callback_data="admin_delete_note")],
-            [InlineKeyboardButton("↩️ Назад", callback_data="admin_notes")]
-        ])
-    )
-
-async def admin_delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    note_id = context.user_data.get("admin_note_id")
-    delete_note(note_id)
-    await update.callback_query.answer("🗑 Удалено")
-    await admin_all_notes(update, context)
-
+# --- Admin Reminders ---
 async def admin_all_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -131,29 +88,39 @@ async def admin_delete_reminder(update: Update, context: ContextTypes.DEFAULT_TY
     await update.callback_query.answer("🗑 Удалено")
     await admin_all_reminders(update, context)
 
+# --- Admin Lists ---
 async def admin_all_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    lists = get_all_lists()
+    users = get_all_users()
 
-    if not lists:
-        await query.edit_message_text("🛍 Нет списков.")
+    if not users:
+        await query.edit_message_text("❌ Пользователей нет.")
         return
 
-    grouped = {}
-    for row in lists:
-        key = (row['user_id'], row['name'])
-        if key not in grouped:
-            grouped[key] = []
-        if row['item']:
-            grouped[key].append(row['item'])
+    buttons = [
+        [InlineKeyboardButton(f"Пользователь {u['user_id']}", callback_data=f"admin_lists_user_{u['user_id']}")]
+        for u in users[:50]
+    ]
+    await query.edit_message_text("👤 Выберите пользователя:", reply_markup=InlineKeyboardMarkup(buttons))
 
-    buttons = []
-    for (user_id, name), items in list(grouped.items())[:50]:
-        short = f"{user_id} – {name}"[:40]
-        buttons.append([InlineKeyboardButton(short, callback_data=f"admin_list_{user_id}_{name}")])
+async def admin_user_lists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = int(query.data.split("_")[-1])
+    context.user_data["selected_user_id"] = user_id
 
-    await query.edit_message_text("🛍 Списки:", reply_markup=InlineKeyboardMarkup(buttons))
+    lists = get_all_user_lists(user_id)
+    if not lists:
+        await query.edit_message_text(f"🛍 У пользователя {user_id} нет списков.")
+        return
+
+    buttons = [
+        [InlineKeyboardButton(f"{lst['name']}", callback_data=f"admin_list_{user_id}_{lst['name']}")]
+        for lst in lists[:50]
+    ]
+    buttons.append([InlineKeyboardButton("↩️ Назад", callback_data="admin_lists")])
+    await query.edit_message_text(f"🛍 Списки пользователя {user_id}:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def admin_list_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -185,18 +152,17 @@ async def admin_delete_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_all_lists(update, context)
 
 # --- Register ---
-def create_application():
+def create_application_without_notes():
     app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
 
     app.add_handler(CommandHandler("start", start))
+
     app.add_handler(CallbackQueryHandler(admin_menu, pattern="^admin_menu$"))
-    app.add_handler(CallbackQueryHandler(admin_all_notes, pattern="^admin_notes$"))
-    app.add_handler(CallbackQueryHandler(admin_note_detail, pattern="^admin_note_\\d+$"))
-    app.add_handler(CallbackQueryHandler(admin_delete_note, pattern="^admin_delete_note$"))
     app.add_handler(CallbackQueryHandler(admin_all_reminders, pattern="^admin_reminders$"))
     app.add_handler(CallbackQueryHandler(admin_reminder_detail, pattern="^admin_reminder_\\d+$"))
     app.add_handler(CallbackQueryHandler(admin_delete_reminder, pattern="^admin_delete_reminder$"))
     app.add_handler(CallbackQueryHandler(admin_all_lists, pattern="^admin_lists$"))
+    app.add_handler(CallbackQueryHandler(admin_user_lists, pattern="^admin_lists_user_\\d+$"))
     app.add_handler(CallbackQueryHandler(admin_list_detail, pattern="^admin_list_\\d+_.+"))
     app.add_handler(CallbackQueryHandler(admin_delete_list, pattern="^admin_delete_list$"))
 

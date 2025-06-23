@@ -1,200 +1,119 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
-import logging
+from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("db")
+load_dotenv()
 
-DB_PARAMS = {
-    "host": os.getenv("DB_HOST"),
-    "database": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "port": os.getenv("DB_PORT"),
-    "sslmode": "require",
-}
-
-def get_conn():
-    return psycopg2.connect(**DB_PARAMS, cursor_factory=RealDictCursor)
-
-def init_db():
-    try:
-        with get_conn() as conn, conn.cursor() as cursor:
-            cursor.execute("DROP TABLE IF EXISTS reminders, notes, shopping_items, shopping_lists, users CASCADE;")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS notes (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id),
-                    text TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT now()
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS shopping_lists (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id),
-                    name TEXT NOT NULL
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS shopping_items (
-                    id SERIAL PRIMARY KEY,
-                    list_id INTEGER REFERENCES shopping_lists(id),
-                    item TEXT NOT NULL
-                );
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS reminders (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id),
-                    text TEXT NOT NULL,
-                    remind_at TIMESTAMP NOT NULL,
-                    chat_id BIGINT
-                );
-            """)
-        logger.info("✅ Таблицы успешно пересозданы")
-    except Exception as e:
-        logger.error(f"Ошибка инициализации БД: {e}")
-
-def ensure_user(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
-        if not cursor.fetchone():
-            cursor.execute("INSERT INTO users (user_id) VALUES (%s)", (user_id,))
-
-def add_note(user_id: int, text: str):
-    ensure_user(user_id)
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("INSERT INTO notes (user_id, text) VALUES (%s, %s)", (user_id, text))
-
-def update_note(note_id: int, new_text: str):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("UPDATE notes SET text = %s WHERE id = %s", (new_text, note_id))
-
-def delete_note(note_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("DELETE FROM notes WHERE id = %s", (note_id,))
-
-def get_all_notes(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text FROM notes WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
-        return cursor.fetchall()
-
-def get_note_by_id(note_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM notes WHERE id = %s", (note_id,))
-        return cursor.fetchone()
-
-def add_shopping_item(user_id: int, list_name: str = None, item: str = None, list_id: int = None):
-    ensure_user(user_id)
-    with get_conn() as conn, conn.cursor() as cursor:
-        if list_id:
-            pass  # список уже есть
-        elif list_name:
-            cursor.execute("SELECT id FROM shopping_lists WHERE user_id = %s AND name = %s", (user_id, list_name))
-            row = cursor.fetchone()
-            if row:
-                list_id = row["id"]
-            else:
-                cursor.execute(
-                    "INSERT INTO shopping_lists (user_id, name) VALUES (%s, %s) RETURNING id",
-                    (user_id, list_name)
-                )
-                list_id = cursor.fetchone()["id"]
-        else:
-            raise ValueError("Не указан list_id или list_name")
-
-        cursor.execute("INSERT INTO shopping_items (list_id, item) VALUES (%s, %s)", (list_id, item))
-
-def update_list_name(list_id: int, new_name: str):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("UPDATE shopping_lists SET name = %s WHERE id = %s", (new_name, list_id))
-
-def delete_list(list_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("DELETE FROM shopping_items WHERE list_id = %s", (list_id,))
-        cursor.execute("DELETE FROM shopping_lists WHERE id = %s", (list_id,))
-
-def get_all_user_lists(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT l.id, l.name, STRING_AGG(i.item, ', ') AS items
-            FROM shopping_lists l
-            LEFT JOIN shopping_items i ON l.id = i.list_id
-            WHERE l.user_id = %s
-            GROUP BY l.id, l.name
-        """, (user_id,))
-        return cursor.fetchall()
-
-def get_list_by_id(list_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM shopping_lists WHERE id = %s", (list_id,))
-        return cursor.fetchone()
-
-def add_reminder(user_id: int, text: str, remind_at: datetime, chat_id: int) -> int:
-    ensure_user(user_id)
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO reminders (user_id, text, remind_at, chat_id) VALUES (%s, %s, %s, %s) RETURNING id",
-            (user_id, text, remind_at, chat_id)
-        )
-        return cursor.fetchone()["id"]
-
-def update_reminder(reminder_id: int, new_text: str, new_time: datetime):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("UPDATE reminders SET text = %s, remind_at = %s WHERE id = %s", (new_text, new_time, reminder_id))
-
-def delete_reminder(reminder_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("DELETE FROM reminders WHERE id = %s", (reminder_id,))
-
-def get_all_user_reminders(user_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT id, text, remind_at FROM reminders WHERE user_id = %s", (user_id,))
-        return cursor.fetchall()
-
-def get_reminder_by_id(reminder_id: int):
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM reminders WHERE id = %s", (reminder_id,))
-        return cursor.fetchone()
-
-def get_all_reminders():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM reminders")
-        return cursor.fetchall()
-
-def get_all_users():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT * FROM users")
-        return cursor.fetchall()
-
-def get_all_lists():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT u.user_id, l.name, i.item
-            FROM users u
-            LEFT JOIN shopping_lists l ON u.user_id = l.user_id
-            LEFT JOIN shopping_items i ON l.id = i.list_id
-            ORDER BY u.user_id, l.name
-        """)
-        return cursor.fetchall()
-
-def get_all_admin_notes():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT user_id, id, text, created_at FROM notes ORDER BY created_at DESC")
-        return cursor.fetchall()
-
-def get_all_admin_reminders():
-    with get_conn() as conn, conn.cursor() as cursor:
-        cursor.execute("SELECT user_id, id, text, remind_at FROM reminders ORDER BY remind_at")
-        return cursor.fetchall()
+conn = psycopg2.connect(
+    host=os.getenv("DB_HOST"),
+    database=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    port=os.getenv("DB_PORT"),
+    cursor_factory=RealDictCursor
+)
+cursor = conn.cursor()
 
 def is_admin(user_id: int) -> bool:
-    return user_id in map(int, os.getenv("ADMINS", "").split(","))
+    admins = os.getenv("ADMINS", "").split(",")
+    return str(user_id) in admins
+
+# -------------------- СПИСКИ --------------------
+def add_shopping_item(user_id: int, list_name: str, item: str):
+    cursor.execute("""
+        INSERT INTO shopping_lists (user_id, name, item)
+        VALUES (%s, %s, %s)
+    """, (user_id, list_name, item))
+    conn.commit()
+
+def get_all_user_lists(user_id: int):
+    cursor.execute("""
+        SELECT id, name FROM shopping_lists
+        WHERE user_id = %s
+        GROUP BY id, name
+    """, (user_id,))
+    return cursor.fetchall()
+
+def get_list_by_id(list_id: int):
+    cursor.execute("""
+        SELECT * FROM shopping_lists
+        WHERE id = %s
+    """, (list_id,))
+    return cursor.fetchone()
+
+def update_list_name(list_id: int, new_name: str):
+    cursor.execute("""
+        UPDATE shopping_lists
+        SET name = %s
+        WHERE id = %s
+    """, (new_name, list_id))
+    conn.commit()
+
+def delete_list(list_id: int):
+    cursor.execute("""
+        DELETE FROM shopping_lists
+        WHERE id = %s
+    """, (list_id,))
+    conn.commit()
+
+def get_all_lists():
+    cursor.execute("""
+        SELECT user_id, name, item FROM shopping_lists
+    """)
+    return cursor.fetchall()
+
+def get_all_users():
+    cursor.execute("""
+        SELECT DISTINCT user_id FROM shopping_lists
+        UNION
+        SELECT DISTINCT user_id FROM reminders
+    """)
+    return cursor.fetchall()
+
+# -------------------- НАПОМИНАНИЯ --------------------
+def add_reminder(user_id: int, text: str, remind_at):
+    cursor.execute("""
+        INSERT INTO reminders (user_id, text, remind_at)
+        VALUES (%s, %s, %s)
+        RETURNING id
+    """, (user_id, text, remind_at))
+    reminder_id = cursor.fetchone()["id"]
+    conn.commit()
+    return reminder_id
+
+def get_all_user_reminders(user_id: int):
+    cursor.execute("""
+        SELECT * FROM reminders
+        WHERE user_id = %s
+        ORDER BY remind_at
+    """, (user_id,))
+    return cursor.fetchall()
+
+def get_reminder_by_id(reminder_id: int):
+    cursor.execute("""
+        SELECT * FROM reminders
+        WHERE id = %s
+    """, (reminder_id,))
+    return cursor.fetchone()
+
+def update_reminder(reminder_id: int, new_text: str, new_time):
+    cursor.execute("""
+        UPDATE reminders
+        SET text = %s, remind_at = %s
+        WHERE id = %s
+    """, (new_text, new_time, reminder_id))
+    conn.commit()
+
+def delete_reminder(reminder_id: int):
+    cursor.execute("""
+        DELETE FROM reminders
+        WHERE id = %s
+    """, (reminder_id,))
+    conn.commit()
+
+def get_all_admin_reminders():
+    cursor.execute("""
+        SELECT * FROM reminders ORDER BY remind_at DESC
+    """)
+    return cursor.fetchall()
