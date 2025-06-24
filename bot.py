@@ -11,9 +11,22 @@ from database import (
 )
 from scheduler import schedule_reminder
 from datetime import datetime
+from enum import Enum, auto
 
-LIST_NAME, LIST_ITEM, CHOOSE_LIST, EDIT_LIST = range(4)
-REMINDER_TEXT, REMINDER_YEAR, REMINDER_MONTH, REMINDER_DAY, REMINDER_HOUR, REMINDER_MINUTE = range(6)
+class ReminderStates(Enum):
+    TEXT = auto()
+    YEAR = auto()
+    MONTH = auto()
+    DAY = auto()
+    HOUR = auto()
+    MINUTE = auto()
+
+REMINDER_TEXT = ReminderStates.TEXT
+REMINDER_YEAR = ReminderStates.YEAR
+REMINDER_MONTH = ReminderStates.MONTH
+REMINDER_DAY = ReminderStates.DAY
+REMINDER_HOUR = ReminderStates.HOUR
+REMINDER_MINUTE = ReminderStates.MINUTE
 
 ADMIN_IDS = os.getenv("ADMIN_IDS", "").split(",")
 
@@ -24,7 +37,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🛍 Списки", callback_data="lists")],
         [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders")],
-        [InlineKeyboardButton("🛠 Админка", callback_data="admin")],
+        [InlineKeyboardButton("🚰 Админка", callback_data="admin")],
     ]
     if update.message:
         await update.message.reply_text("Выберите действие:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -49,6 +62,9 @@ async def new_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REMINDER_TEXT
 
 async def save_reminder_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text:
+        await update.message.reply_text("⛔️ Напоминание не может быть пустым. Попробуйте ещё раз.")
+        return REMINDER_TEXT
     context.user_data["reminder_text"] = update.message.text
     current_year = datetime.now().year
     year_buttons = [[InlineKeyboardButton(str(year), callback_data=f"year_{year}")] for year in range(current_year, current_year + 3)]
@@ -122,5 +138,5 @@ async def pick_minute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = context.user_data["reminder_text"]
     create_reminder(user_id, text, dt)
     schedule_reminder(context.application, user_id, text, dt)
-    await query.edit_message_text(f"✅ Напоминание установлено на {dt.strftime('%Y-%m-%d %H:%M')}.")
+    await query.edit_message_text(f"✅ Напоминание установлено на {dt.strftime('%Y-%m-%d %H:%M')}")
     return ConversationHandler.END
