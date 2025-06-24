@@ -4,11 +4,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ConversationHandler, ContextTypes
 )
-from database import (
-    create_list, add_item_to_list, get_lists, get_items_from_list,
-    delete_list, delete_item_from_list,
-    create_reminder, get_reminders, delete_reminder, get_users, get_admins
-)
+from database import create_reminder, get_reminders, delete_reminder
 from scheduler import schedule_reminder
 from datetime import datetime
 from enum import Enum, auto
@@ -58,7 +54,10 @@ async def show_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def new_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.edit_message_text("Введите текст напоминания:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="reminders")]]))
+    await update.callback_query.edit_message_text(
+        "Введите текст напоминания:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="reminders")]])
+    )
     return REMINDER_TEXT
 
 async def save_reminder_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,7 +87,6 @@ async def pick_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     month = int(query.data.split("_")[1])
     context.user_data["reminder_month"] = month
     year = context.user_data["reminder_year"]
-
     import calendar
     max_day = calendar.monthrange(year, month)[1]
     day_buttons = [[InlineKeyboardButton(str(d), callback_data=f"day_{d}")] for d in range(1, max_day + 1)]
@@ -140,3 +138,25 @@ async def pick_minute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     schedule_reminder(context.application, user_id, text, dt)
     await query.edit_message_text(f"✅ Напоминание установлено на {dt.strftime('%Y-%m-%d %H:%M')}")
     return ConversationHandler.END
+
+# === Инициализация приложения ===
+
+application = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+
+reminder_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(new_reminder, pattern="^new_reminder$")],
+    states={
+        REMINDER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_reminder_text)],
+        REMINDER_YEAR: [CallbackQueryHandler(pick_year, pattern="^year_")],
+        REMINDER_MONTH: [CallbackQueryHandler(pick_month, pattern="^month_")],
+        REMINDER_DAY: [CallbackQueryHandler(pick_day, pattern="^day_")],
+        REMINDER_HOUR: [CallbackQueryHandler(pick_hour, pattern="^hour_")],
+        REMINDER_MINUTE: [CallbackQueryHandler(pick_minute, pattern="^minute_")],
+    },
+    fallbacks=[],
+)
+
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(start, pattern="^back$"))
+application.add_handler(CallbackQueryHandler(show_reminders, pattern="^reminders$"))
+application.add_handler(reminder_conv)
