@@ -21,7 +21,7 @@ services:
         value: "5432"
       - key: RENDER_EXTERNAL_HOSTNAME
         value: tg-bot-napominalka.onrender.com
-     - key: ADMIN_IDS
+      - key: ADMIN_IDS
         value: 372690348
 
 

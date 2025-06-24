@@ -37,7 +37,7 @@ def is_admin(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("🛍 Списки", callback_data="lists")],
+        [InlineKeyboardButton("🏡 Списки", callback_data="lists")],
         [InlineKeyboardButton("⏰ Напоминания", callback_data="reminders")],
         [InlineKeyboardButton("🚰 Админка", callback_data="admin")],
     ]
@@ -94,4 +94,16 @@ async def show_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("Ваши напоминания:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# Остальной код для напоминаний без изменений...
+# ==== Создание application ====
+
+application = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(show_lists, pattern="^lists$"))
+application.add_handler(CallbackQueryHandler(show_admin, pattern="^admin$"))
+application.add_handler(CallbackQueryHandler(show_reminders, pattern="^reminders$"))
+application.add_handler(CallbackQueryHandler(start, pattern="^back$"))
+
+# Здесь можно подключить ConversationHandler'ы и прочие хендлеры
+
+__all__ = ["application"]

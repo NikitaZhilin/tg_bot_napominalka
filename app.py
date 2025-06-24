@@ -1,29 +1,23 @@
 from fastapi import FastAPI, Request
 from telegram import Update
-from bot import application  # Предполагается, что application создан в bot.py
-import os
-import asyncio
+from bot import application  # из bot.py импортируется уже созданный application
 
-WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN", "secret")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 app = FastAPI()
 
 @app.on_event("startup")
 async def on_startup():
-    await application.initialize()
+    await application.initialize()  # ✅ ОБЯЗАТЕЛЬНО для PTB + FastAPI
     await application.start()
-    await application.bot.set_webhook(
-        url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook/{WEBHOOK_SECRET_TOKEN}"
-    )
+    # set_webhook можно добавить здесь, если используется Telegram Webhook API
 
 @app.on_event("shutdown")
 async def on_shutdown():
     await application.stop()
     await application.shutdown()
 
-@app.post(f"/webhook/{WEBHOOK_SECRET_TOKEN}")
+@app.post("/")
 async def webhook(request: Request):
     data = await request.json()
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
-    return {"ok": True}
+    return {"status": "ok"}
