@@ -149,13 +149,13 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="back")]]
     if not is_admin(user_id):
-        await query.edit_message_text("⛔️ Доступ запрещён")
+        await query.edit_message_text("⛔️ Доступ запрещён", reply_markup=InlineKeyboardMarkup(keyboard))
         return
     users = get_users()
     admins = get_admins()
     text = f"👤 Пользователей: {users}\n👮‍♂️ Админов: {admins}"
-    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="back")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==== Обработка команд ====
